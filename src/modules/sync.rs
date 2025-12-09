@@ -167,22 +167,6 @@ impl SyncClient {
         Self { addr }
     }
 
-    pub async fn send_clipboard(&self, content: ClipboardContent) -> Result<()> {
-        let stream = TcpStream::connect(self.addr).await?;
-        let (mut _read_half, mut write_half) = stream.into_split();
-
-        let message = ClipboardMessage {
-            content,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-        };
-
-        write_message(&mut write_half, &message).await?;
-
-        Ok(())
-    }
-
     pub async fn connect_bidirectional(
         &self,
         tx: mpsc::UnboundedSender<ClipboardContent>,
@@ -248,36 +232,6 @@ impl SyncClient {
         tokio::select! {
             _ = receive_handle => {},
             _ = send_handle => {},
-        }
-
-        Ok(())
-    }
-
-    pub async fn connect_and_receive<F>(
-        &self,
-        mut callback: F,
-    ) -> Result<()>
-    where
-        F: FnMut(ClipboardContent) -> Result<()>,
-    {
-        let stream = TcpStream::connect(self.addr).await?;
-        println!("Connected to server at {}", self.addr);
-
-        let (mut read_half, mut _write_half) = stream.into_split();
-
-        loop {
-            match read_message::<ClipboardMessage>(&mut read_half).await {
-                Ok(message) => {
-                    callback(message.content)?;
-                }
-                Err(e) => {
-                    if e.to_string().contains("Failed to read message length") {
-                        println!("Server closed connection");
-                        break;
-                    }
-                    return Err(e);
-                }
-            }
         }
 
         Ok(())
