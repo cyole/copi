@@ -1,28 +1,28 @@
-# Copi - 跨平台剪贴板同步工具
+# Copi - Cross-Platform Clipboard Sync Tool
 
-一个跨 Linux 和 macOS 系统的剪贴板同步工具，使用 Rust 编写。
+A cross-platform clipboard synchronization tool for Linux and macOS, written in Rust.
 
-## 功能特性
+## Features
 
-- ✨ 跨平台支持（Linux 和 macOS）
-- 📝 支持文本和图片剪贴板同步
-- 🖼️ 自动检测并同步图片（PNG 格式）
-- 🔄 实时剪贴板监控
-- 🌐 网络同步剪贴板内容
-- 🚀 轻量级和高性能
-- 🔒 使用 SHA-256 避免重复同步
-- 🎯 完整支持 Wayland（使用 wl-clipboard）
+- ✨ Cross-platform support (Linux and macOS)
+- 📝 Supports text and image clipboard synchronization
+- 🖼️ Automatic detection and syncing of images (PNG format)
+- 🔄 Real-time clipboard monitoring
+- 🌐 Network-based clipboard synchronization
+- 🚀 Lightweight and high-performance
+- 🔒 Uses SHA-256 to avoid duplicate synchronization
+- 🎯 Full Wayland support (using wl-clipboard)
 
-## 系统要求
+## System Requirements
 
-- Rust 1.70 或更高版本
-- Linux 或 macOS 操作系统
+- Rust 1.70 or higher
+- Linux or macOS operating system
 
-### Linux 系统依赖
+### Linux System Dependencies
 
-在 Linux 上，需要安装 X11 或 Wayland 的剪贴板支持：
+On Linux, you need to install clipboard support for either X11 or Wayland:
 
-**对于 X11：**
+**For X11:**
 ```bash
 # Ubuntu/Debian
 sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
@@ -31,7 +31,7 @@ sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
 sudo dnf install libxcb-devel
 ```
 
-**对于 Wayland（推荐）：**
+**For Wayland (Recommended):**
 ```bash
 # Ubuntu/Debian
 sudo apt install wl-clipboard
@@ -43,111 +43,112 @@ sudo dnf install wl-clipboard
 sudo pacman -S wl-clipboard
 ```
 
-程序会自动检测运行环境（X11 或 Wayland）并使用相应的剪贴板后端。
+The program automatically detects the running environment (X11 or Wayland) and uses the appropriate clipboard backend.
 
-## 安装
+## Installation
 
 ```bash
-# 克隆仓库
+# Clone the repository
 git clone <repository-url>
-cd Copi
+cd copi
 
-# 编译项目
+# Build the project
 cargo build --release
 
-# 可执行文件位于
+# The executable is located at
 ./target/release/copi
 ```
 
-## 使用方法
+## Usage
 
-### 服务器模式
+### Server Mode
 
-在一台机器上启动服务器：
+Start the server on one machine:
 
 ```bash
 ./target/release/copi server
-# 或者在开发时
+# Or during development
 cargo run -- server
 ```
 
-默认监听地址为 `0.0.0.0:9527`。你也可以指定自定义地址：
+The default listening address is `0.0.0.0:9527`. You can also specify a custom address:
 
 ```bash
 copi server --addr 0.0.0.0:8080
 ```
 
-### 客户端模式
+### Client Mode
 
-在另一台机器上启动客户端：
+Start the client on another machine:
 
 ```bash
-copi client --server <服务器IP>:9527
+copi client --server <server-ip>:9527
 ```
 
-例如：
+For example:
 
 ```bash
 copi client --server 192.168.1.100:9527
 ```
 
-客户端会自动监听本地剪贴板变化（包括文本和图片），并与服务器同步。
+The client automatically monitors local clipboard changes (including text and images) and syncs with the server.
 
-### 支持的剪贴板内容
+### Supported Clipboard Content
 
-- ✅ 纯文本
-- ✅ 图片（PNG、JPEG 等格式，内部转换为 PNG）
-- ⏳ 未来可能支持：文件、富文本等
+- ✅ Plain text
+- ✅ Images (PNG, JPEG, and other formats, internally converted to PNG)
+- ⏳ Future support may include: files, rich text, etc.
 
-## 工作原理
+## How It Works
 
-1. **服务器端**：
-   - 监听指定端口接收客户端连接
-   - 监控本地剪贴板变化
-   - 接收来自客户端的剪贴板内容
+1. **Server Side**:
+   - Listens on a specified port for client connections
+   - Monitors local clipboard changes
+   - Receives clipboard content from clients
 
-2. **客户端端**：
-   - 连接到服务器
-   - 监控本地剪贴板变化并发送到服务器
-   - 接收服务器推送的剪贴板内容
-   - 自动更新本地剪贴板
+2. **Client Side**:
+   - Connects to the server
+   - Monitors local clipboard changes and sends them to the server
+   - Receives clipboard content pushed by the server
+   - Automatically updates the local clipboard
 
-3. **去重机制**：
-   - 使用 SHA-256 哈希值跟踪剪贴板内容
-   - 避免相同内容的重复同步
+3. **Deduplication Mechanism**:
+   - Uses SHA-256 hash values to track clipboard content
+   - Avoids redundant synchronization of identical content
 
-## 架构
+## Architecture
 
 ```
 src/
-├── main.rs                 # 主程序入口和 CLI 处理
+├── main.rs                 # Main program entry and CLI handling
 └── modules/
-    ├── mod.rs             # 模块声明
-    ├── clipboard.rs       # 剪贴板监控模块
-    └── sync.rs            # 网络同步模块
+    ├── mod.rs             # Module declarations
+    ├── clipboard.rs       # Clipboard monitoring module
+    └── sync.rs            # Network synchronization module
 ```
 
-## 依赖项
+## Dependencies
 
-- `arboard` - 跨平台剪贴板访问（支持文本和图片）
-- `tokio` - 异步运行时
-- `serde` / `serde_json` - 序列化和反序列化
-- `anyhow` - 错误处理
-- `clap` - 命令行参数解析
-- `sha2` - SHA-256 哈希计算
-- `base64` - 图片数据编码
-- `image` - 图片处理和格式转换
+- `arboard` - Cross-platform clipboard access (supports text and images)
+- `tokio` - Async runtime
+- `serde` / `serde_json` - Serialization and deserialization
+- `anyhow` - Error handling
+- `clap` - Command-line argument parsing
+- `sha2` - SHA-256 hash computation
+- `base64` - Image data encoding
+- `image` - Image processing and format conversion
 
-## 安全注意事项
+## Security Considerations
 
-- 目前的实现使用明文传输剪贴板内容
-- 建议在受信任的网络环境中使用
-- 未来版本可以添加 TLS/SSL 加密支持
+- The current implementation transmits clipboard content in plain text
+- Recommended for use in trusted network environments
+- Future versions may add TLS/SSL encryption support
 
-## 许可证
+## License
 
 MIT License
 
-## 贡献
+## Contributing
 
-欢迎提交 Issue 和 Pull Request！
+Issues and Pull Requests are welcome!
+
