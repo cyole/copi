@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
 async fn run_server(addr: SocketAddr, relay_only: bool) -> Result<()> {
     println!("Starting clipboard sync server...");
     println!("Platform: {}", std::env::consts::OS);
-    
+
     if relay_only {
         println!("Running in relay-only mode (no clipboard access)");
     }
@@ -145,10 +145,16 @@ async fn run_server(addr: SocketAddr, relay_only: bool) -> Result<()> {
             while let Some(content) = rx.recv().await {
                 match &content {
                     ClipboardContent::Text(text) => {
-                        println!("Received clipboard content from client: text ({} bytes)", text.len());
+                        println!(
+                            "Received clipboard content from client: text ({} bytes)",
+                            text.len()
+                        );
                     }
                     ClipboardContent::Image { width, height, .. } => {
-                        println!("Received clipboard content from client: image ({}x{})", width, height);
+                        println!(
+                            "Received clipboard content from client: image ({}x{})",
+                            width, height
+                        );
                     }
                 }
                 // Update server's clipboard when receiving from client
@@ -181,7 +187,10 @@ async fn run_client(server_addr: SocketAddr, _listen_addr: SocketAddr) -> Result
     let connection_handle = tokio::spawn(async move {
         loop {
             let to_server_rx = to_server_for_connection.subscribe();
-            match client.connect_bidirectional(from_server_tx.clone(), to_server_rx).await {
+            match client
+                .connect_bidirectional(from_server_tx.clone(), to_server_rx)
+                .await
+            {
                 Ok(_) => {
                     println!("Connection closed, reconnecting...");
                 }
@@ -204,20 +213,29 @@ async fn run_client(server_addr: SocketAddr, _listen_addr: SocketAddr) -> Result
             }
         };
 
-        if let Err(e) = clipboard.monitor(move |content| {
-            match &content {
-                ClipboardContent::Text(text) => {
-                    println!("Local clipboard changed, sending to server: text ({} bytes)", text.len());
+        if let Err(e) = clipboard
+            .monitor(move |content| {
+                match &content {
+                    ClipboardContent::Text(text) => {
+                        println!(
+                            "Local clipboard changed, sending to server: text ({} bytes)",
+                            text.len()
+                        );
+                    }
+                    ClipboardContent::Image { width, height, .. } => {
+                        println!(
+                            "Local clipboard changed, sending to server: image ({}x{})",
+                            width, height
+                        );
+                    }
                 }
-                ClipboardContent::Image { width, height, .. } => {
-                    println!("Local clipboard changed, sending to server: image ({}x{})", width, height);
+                if let Err(e) = to_server_for_clipboard.send(content.clone()) {
+                    eprintln!("Failed to send to channel: {}", e);
                 }
-            }
-            if let Err(e) = to_server_for_clipboard.send(content.clone()) {
-                eprintln!("Failed to send to channel: {}", e);
-            }
-            Ok(())
-        }).await {
+                Ok(())
+            })
+            .await
+        {
             eprintln!("Clipboard monitor error: {}", e);
         }
     });
@@ -235,10 +253,16 @@ async fn run_client(server_addr: SocketAddr, _listen_addr: SocketAddr) -> Result
         while let Some(content) = from_server_rx.recv().await {
             match &content {
                 ClipboardContent::Text(text) => {
-                    println!("Received clipboard from server: text ({} bytes)", text.len());
+                    println!(
+                        "Received clipboard from server: text ({} bytes)",
+                        text.len()
+                    );
                 }
                 ClipboardContent::Image { width, height, .. } => {
-                    println!("Received clipboard from server: image ({}x{})", width, height);
+                    println!(
+                        "Received clipboard from server: image ({}x{})",
+                        width, height
+                    );
                 }
             }
             if let Err(e) = clipboard.set_clipboard_content(&content) {

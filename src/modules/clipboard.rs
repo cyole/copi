@@ -1,9 +1,9 @@
+use crate::modules::sync::ClipboardContent;
 use anyhow::Result;
 use arboard::{Clipboard, ImageData};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio::time::sleep;
-use crate::modules::sync::ClipboardContent;
 
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -38,7 +38,9 @@ impl ClipboardMonitor {
                         last_hash: None,
                     });
                 } else {
-                    println!("Wayland detected but wl-clipboard not found, falling back to arboard");
+                    println!(
+                        "Wayland detected but wl-clipboard not found, falling back to arboard"
+                    );
                     println!("Install wl-clipboard for better Wayland support:");
                     println!("  Ubuntu/Debian: sudo apt install wl-clipboard");
                     println!("  Fedora: sudo dnf install wl-clipboard");
@@ -57,10 +59,7 @@ impl ClipboardMonitor {
 
     #[cfg(target_os = "linux")]
     fn check_wl_clipboard_available() -> bool {
-        Command::new("wl-paste")
-            .arg("--version")
-            .output()
-            .is_ok()
+        Command::new("wl-paste").arg("--version").output().is_ok()
     }
 
     fn hash_content(content: &ClipboardContent) -> String {
@@ -70,7 +69,11 @@ impl ClipboardMonitor {
                 hasher.update(b"text:");
                 hasher.update(text.as_bytes());
             }
-            ClipboardContent::Image { data, width, height } => {
+            ClipboardContent::Image {
+                data,
+                width,
+                height,
+            } => {
                 hasher.update(b"image:");
                 hasher.update(data.as_bytes());
                 hasher.update(&width.to_le_bytes());
@@ -83,14 +86,19 @@ impl ClipboardMonitor {
     pub fn get_clipboard_content(&mut self) -> Result<Option<ClipboardContent>> {
         let content_result: Result<ClipboardContent> = match self.backend {
             ClipboardBackend::Arboard => {
-                let clipboard = self.clipboard.as_mut()
+                let clipboard = self
+                    .clipboard
+                    .as_mut()
                     .ok_or_else(|| anyhow::anyhow!("Clipboard not initialized"))?;
 
                 // Try to get image first
                 if let Ok(img) = clipboard.get_image() {
                     // Convert ImageData to PNG and encode as base64
                     let png_data = Self::image_data_to_png(&img)?;
-                    let base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png_data);
+                    let base64_data = base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &png_data,
+                    );
 
                     Ok(ClipboardContent::Image {
                         data: base64_data,
@@ -99,7 +107,8 @@ impl ClipboardMonitor {
                     })
                 } else {
                     // Fall back to text
-                    clipboard.get_text()
+                    clipboard
+                        .get_text()
                         .map(ClipboardContent::Text)
                         .map_err(|e| anyhow::anyhow!("Failed to get clipboard content: {}", e))
                 }
@@ -136,11 +145,9 @@ impl ClipboardMonitor {
         use std::io::Cursor;
 
         // Convert ImageData bytes to RgbaImage
-        let img_buffer: RgbaImage = ImageBuffer::from_raw(
-            img.width as u32,
-            img.height as u32,
-            img.bytes.to_vec(),
-        ).ok_or_else(|| anyhow::anyhow!("Failed to create image buffer"))?;
+        let img_buffer: RgbaImage =
+            ImageBuffer::from_raw(img.width as u32, img.height as u32, img.bytes.to_vec())
+                .ok_or_else(|| anyhow::anyhow!("Failed to create image buffer"))?;
 
         // Encode as PNG
         let mut png_data = Vec::new();
@@ -170,9 +177,7 @@ impl ClipboardMonitor {
 
     #[cfg(target_os = "linux")]
     fn wl_paste() -> Result<String> {
-        let output = Command::new("wl-paste")
-            .arg("--no-newline")
-            .output()?;
+        let output = Command::new("wl-paste").arg("--no-newline").output()?;
 
         if output.status.success() {
             Ok(String::from_utf8(output.stdout)?)
@@ -201,7 +206,8 @@ impl ClipboardMonitor {
             let height = img.height();
 
             // Encode as base64
-            let base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &output.stdout);
+            let base64_data =
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &output.stdout);
 
             Ok(ClipboardContent::Image {
                 data: base64_data,
@@ -216,37 +222,46 @@ impl ClipboardMonitor {
     pub fn set_clipboard_content(&mut self, content: &ClipboardContent) -> Result<()> {
         match self.backend {
             ClipboardBackend::Arboard => {
-                let clipboard = self.clipboard.as_mut()
+                let clipboard = self
+                    .clipboard
+                    .as_mut()
                     .ok_or_else(|| anyhow::anyhow!("Clipboard not initialized"))?;
 
                 match content {
                     ClipboardContent::Text(text) => {
-                        clipboard.set_text(text)
+                        clipboard
+                            .set_text(text)
                             .map_err(|e| anyhow::anyhow!("Failed to set clipboard text: {}", e))?;
                     }
-                    ClipboardContent::Image { data, width, height } => {
+                    ClipboardContent::Image {
+                        data,
+                        width,
+                        height,
+                    } => {
                         // Decode base64
-                        let png_data = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data)?;
+                        let png_data = base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            data,
+                        )?;
 
                         // Convert to ImageData
                         let img_data = Self::png_to_image_data(&png_data, *width, *height)?;
 
-                        clipboard.set_image(img_data)
+                        clipboard
+                            .set_image(img_data)
                             .map_err(|e| anyhow::anyhow!("Failed to set clipboard image: {}", e))?;
                     }
                 }
             }
             #[cfg(target_os = "linux")]
-            ClipboardBackend::WlClipboard => {
-                match content {
-                    ClipboardContent::Text(text) => {
-                        Self::wl_copy_text(text)?;
-                    }
-                    ClipboardContent::Image { data, .. } => {
-                        Self::wl_copy_image(data)?;
-                    }
+            ClipboardBackend::WlClipboard => match content {
+                ClipboardContent::Text(text) => {
+                    Self::wl_copy_text(text)?;
                 }
-            }
+                ClipboardContent::Image { data, .. } => {
+                    Self::wl_copy_image(data)?;
+                }
+            },
         }
 
         self.last_hash = Some(Self::hash_content(content));
@@ -258,9 +273,7 @@ impl ClipboardMonitor {
         use std::io::Write;
         use std::process::Stdio;
 
-        let mut child = Command::new("wl-copy")
-            .stdin(Stdio::piped())
-            .spawn()?;
+        let mut child = Command::new("wl-copy").stdin(Stdio::piped()).spawn()?;
 
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(content.as_bytes())?;
@@ -280,7 +293,8 @@ impl ClipboardMonitor {
         use std::process::Stdio;
 
         // Decode base64 to get PNG data
-        let png_data = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data)?;
+        let png_data =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data)?;
 
         let mut child = Command::new("wl-copy")
             .arg("--type")

@@ -1,9 +1,9 @@
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -24,49 +24,50 @@ pub struct ClipboardMessage {
 }
 
 // Helper functions for length-prefixed message protocol
-async fn read_message<T: for<'de> Deserialize<'de>>(
-    reader: &mut OwnedReadHalf,
-) -> Result<T> {
+async fn read_message<T: for<'de> Deserialize<'de>>(reader: &mut OwnedReadHalf) -> Result<T> {
     // Read 4-byte length prefix (big-endian)
     let mut len_bytes = [0u8; 4];
-    reader.read_exact(&mut len_bytes).await
+    reader
+        .read_exact(&mut len_bytes)
+        .await
         .context("Failed to read message length")?;
     let len = u32::from_be_bytes(len_bytes) as usize;
 
     // Validate message length
-    if len == 0 || len > 10_000_000 {  // Max 10MB
+    if len == 0 || len > 10_000_000 {
+        // Max 10MB
         anyhow::bail!("Invalid message length: {}", len);
     }
 
     // Read message data
     let mut buffer = vec![0u8; len];
-    reader.read_exact(&mut buffer).await
+    reader
+        .read_exact(&mut buffer)
+        .await
         .context("Failed to read message data")?;
 
     // Deserialize JSON
-    serde_json::from_slice(&buffer)
-        .context("Failed to deserialize message")
+    serde_json::from_slice(&buffer).context("Failed to deserialize message")
 }
 
-async fn write_message<T: Serialize>(
-    writer: &mut OwnedWriteHalf,
-    message: &T,
-) -> Result<()> {
+async fn write_message<T: Serialize>(writer: &mut OwnedWriteHalf, message: &T) -> Result<()> {
     // Serialize to JSON
-    let data = serde_json::to_vec(message)
-        .context("Failed to serialize message")?;
+    let data = serde_json::to_vec(message).context("Failed to serialize message")?;
 
     // Write length prefix (4 bytes, big-endian)
     let len = data.len() as u32;
-    writer.write_all(&len.to_be_bytes()).await
+    writer
+        .write_all(&len.to_be_bytes())
+        .await
         .context("Failed to write length prefix")?;
 
     // Write message data
-    writer.write_all(&data).await
+    writer
+        .write_all(&data)
+        .await
         .context("Failed to write message data")?;
 
-    writer.flush().await
-        .context("Failed to flush")?;
+    writer.flush().await.context("Failed to flush")?;
 
     Ok(())
 }
@@ -78,8 +79,16 @@ pub struct SyncServer {
 }
 
 impl SyncServer {
-    pub fn new(addr: SocketAddr, tx: mpsc::UnboundedSender<ClipboardContent>, broadcast_tx: broadcast::Sender<ClipboardMessage>) -> Self {
-        Self { addr, tx, broadcast_tx }
+    pub fn new(
+        addr: SocketAddr,
+        tx: mpsc::UnboundedSender<ClipboardContent>,
+        broadcast_tx: broadcast::Sender<ClipboardMessage>,
+    ) -> Self {
+        Self {
+            addr,
+            tx,
+            broadcast_tx,
+        }
     }
 
     pub async fn start(&self) -> Result<()> {
