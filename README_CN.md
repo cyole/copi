@@ -1,5 +1,7 @@
 # Copi - 跨平台剪贴板同步工具
 
+[English](README.md) | [使用示例](USAGE_EXAMPLES.md)
+
 一个跨 Linux 和 macOS 系统的剪贴板同步工具，使用 Rust 编写。
 
 ## 功能特性
@@ -17,6 +19,8 @@
 
 - Rust 1.70 或更高版本
 - Linux 或 macOS 操作系统
+
+> **注意**：Windows 平台尚未测试。虽然代码可能可以在 Windows 上编译，但剪贴板功能和网络同步尚未在该平台上验证。
 
 ### Linux 系统依赖
 

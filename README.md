@@ -1,5 +1,7 @@
 # Copi - Cross-Platform Clipboard Sync Tool
 
+[中文文档](README_CN.md) | [使用示例](USAGE_EXAMPLES.md)
+
 A cross-platform clipboard synchronization tool for Linux and macOS, written in Rust.
 
 ## Features
@@ -17,6 +19,8 @@ A cross-platform clipboard synchronization tool for Linux and macOS, written in 
 
 - Rust 1.70 or higher
 - Linux or macOS operating system
+
+> **Note**: Windows support has not been tested. While the code may compile on Windows, clipboard functionality and network synchronization have not been verified on this platform.
 
 ### Linux System Dependencies
 
