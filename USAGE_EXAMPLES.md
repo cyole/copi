@@ -30,17 +30,17 @@ copi client --server 192.168.1.100:9527
 
 ### 服务器 (机器 A)
 ```bash
-cargo run -- server
+copi server
 ```
 
 ### 客户端 1 (机器 B)
 ```bash
-cargo run -- client --server 192.168.1.100:9527
+copi client --server 192.168.1.100:9527
 ```
 
 ### 客户端 2 (机器 C)
 ```bash
-cargo run -- client --server 192.168.1.100:9527
+copi client --server 192.168.1.100:9527
 ```
 
 所有三台机器的剪贴板将保持同步。
@@ -51,12 +51,12 @@ cargo run -- client --server 192.168.1.100:9527
 
 ### 服务器
 ```bash
-cargo run -- server --addr 0.0.0.0:7777
+copi server --addr 0.0.0.0:7777
 ```
 
 ### 客户端
 ```bash
-cargo run -- client --server 192.168.1.100:7777 --listen 0.0.0.0:7778
+copi client --server 192.168.1.100:7777 --listen 0.0.0.0:7778
 ```
 
 ## 场景 4: 在云服务器上使用中继模式
@@ -169,33 +169,31 @@ launchctl load ~/Library/LaunchAgents/com.copi.plist
 
 ```ini
 [Unit]
-Description=Clipboard Sync Service
-After=network.target
+Description=Copi Clipboard Sync Service
+After=graphical-session.target
 
 [Service]
 Type=simple
-User=yourusername
 ExecStart=/path/to/copi server
 Restart=always
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 ```
 
 如果在无图形界面的服务器上，使用 relay-only 模式：
 ```ini
 [Unit]
-Description=Clipboard Sync Relay Service
-After=network.target
+Description=Copi Clipboard Sync Service
+After=graphical-session.target
 
 [Service]
 Type=simple
-User=yourusername
 ExecStart=/path/to/copi server --relay-only
 Restart=always
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 ```
 
 启动服务:

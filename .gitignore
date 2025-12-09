@@ -1,1 +1,20 @@
+# Rust
 /target
+*.rs.bk
+*.pdb
+
+# Release artifacts
+*.tar.gz
+*.zip
+release_notes.md
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Backup files
+*.bak
+*.tmp

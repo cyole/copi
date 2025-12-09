@@ -1,5 +1,9 @@
 # Copi - 跨平台剪贴板同步工具
 
+[![CI](https://github.com/cyole/copi/workflows/CI/badge.svg)](https://github.com/cyole/copi/actions)
+[![Release](https://github.com/cyole/copi/workflows/Release/badge.svg)](https://github.com/cyole/copi/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 [English](README.md) | [使用示例](USAGE_EXAMPLES.md)
 
 一个跨 Linux 和 macOS 系统的剪贴板同步工具，使用 Rust 编写。
@@ -51,16 +55,45 @@ sudo pacman -S wl-clipboard
 
 ## 安装
 
+### 方式 1: 从 GitHub Release 下载（推荐）
+
+从 [Releases 页面](https://github.com/cyole/copi/releases) 下载适合你系统的预编译二进制文件：
+
+```bash
+# 下载（以 Linux x86_64 为例，请根据你的系统选择）
+wget https://github.com/cyole/copi/releases/latest/download/copi-Linux-x86_64.tar.gz
+
+# 解压
+tar xzf copi-Linux-x86_64.tar.gz
+
+# 移动到系统路径（可选）
+sudo mv copi /usr/local/bin/
+
+# 验证安装
+copi --help
+```
+
+可用的平台：
+- `copi-Linux-x86_64.tar.gz` - Linux x86_64
+- `copi-Linux-aarch64.tar.gz` - Linux ARM64
+- `copi-Darwin-x86_64.tar.gz` - macOS Intel
+- `copi-Darwin-aarch64.tar.gz` - macOS Apple Silicon
+
+### 方式 2: 从源码编译
+
 ```bash
 # 克隆仓库
-git clone <repository-url>
-cd Copi
+git clone https://github.com/cyole/copi
+cd copi
 
 # 编译项目
 cargo build --release
 
 # 可执行文件位于
 ./target/release/copi
+
+# 可选：安装到系统路径
+cargo install --path .
 ```
 
 ## 使用方法

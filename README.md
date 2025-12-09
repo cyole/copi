@@ -1,5 +1,9 @@
 # Copi - Cross-Platform Clipboard Sync Tool
 
+[![CI](https://github.com/cyole/copi/workflows/CI/badge.svg)](https://github.com/cyole/copi/actions)
+[![Release](https://github.com/cyole/copi/workflows/Release/badge.svg)](https://github.com/cyole/copi/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 [中文文档](README_CN.md) | [使用示例](USAGE_EXAMPLES.md)
 
 A cross-platform clipboard synchronization tool for Linux and macOS, written in Rust.
@@ -51,9 +55,35 @@ The program automatically detects the running environment (X11 or Wayland) and u
 
 ## Installation
 
+### Option 1: Download from GitHub Releases (Recommended)
+
+Download pre-built binaries for your system from the [Releases page](https://github.com/cyole/copi/releases):
+
+```bash
+# Download (using Linux x86_64 as example, choose based on your system)
+wget https://github.com/cyole/copi/releases/latest/download/copi-Linux-x86_64.tar.gz
+
+# Extract
+tar xzf copi-Linux-x86_64.tar.gz
+
+# Move to system path (optional)
+sudo mv copi /usr/local/bin/
+
+# Verify installation
+copi --help
+```
+
+Available platforms:
+- `copi-Linux-x86_64.tar.gz` - Linux x86_64
+- `copi-Linux-aarch64.tar.gz` - Linux ARM64
+- `copi-Darwin-x86_64.tar.gz` - macOS Intel
+- `copi-Darwin-aarch64.tar.gz` - macOS Apple Silicon
+
+### Option 2: Build from Source
+
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/cyole/copi
 cd copi
 
 # Build the project
@@ -61,6 +91,9 @@ cargo build --release
 
 # The executable is located at
 ./target/release/copi
+
+# Optional: Install to system path
+cargo install --path .
 ```
 
 ## Usage
