@@ -59,6 +59,28 @@ cargo run -- server --addr 0.0.0.0:7777
 cargo run -- client --server 192.168.1.100:7777 --listen 0.0.0.0:7778
 ```
 
+## 场景 4: 在云服务器上使用中继模式
+
+如果你想在无图形界面的云服务器（如 VPS、Docker 容器等）上运行服务器作为中继节点：
+
+### 服务器 (云服务器 - 公网 IP: 1.2.3.4)
+```bash
+# 使用 relay-only 模式，服务器不会尝试访问剪贴板
+copi server --addr 0.0.0.0:9527 --relay-only
+```
+
+### 客户端 1 (家里的机器 - macOS)
+```bash
+copi client --server 1.2.3.4:9527
+```
+
+### 客户端 2 (办公室的机器 - Linux)
+```bash
+copi client --server 1.2.3.4:9527
+```
+
+在这种设置下，云服务器仅作为中继，转发客户端之间的剪贴板数据，不会尝试访问自己的剪贴板（这在无头服务器上会导致错误）。两台客户端机器的剪贴板可以通过云服务器保持同步。
+
 ## 测试
 
 ### 在 macOS 上测试
@@ -115,7 +137,7 @@ cargo build --release
 ### 作为后台服务运行
 
 #### macOS (使用 launchd)
-创建 `~/Library/LaunchAgents/com.clipboard-sync.plist`:
+创建 `~/Library/LaunchAgents/com.copi.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -123,10 +145,10 @@ cargo build --release
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.clipboard-sync</string>
+    <string>com.copi</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/path/to/clipboard-sync</string>
+        <string>/path/to/copi</string>
         <string>server</string>
     </array>
     <key>RunAtLoad</key>
@@ -139,11 +161,11 @@ cargo build --release
 
 加载服务:
 ```bash
-launchctl load ~/Library/LaunchAgents/com.clipboard-sync.plist
+launchctl load ~/Library/LaunchAgents/com.copi.plist
 ```
 
 #### Linux (使用 systemd)
-创建 `/etc/systemd/system/clipboard-sync.service`:
+创建 `/etc/systemd/system/copi.service`:
 
 ```ini
 [Unit]
@@ -153,7 +175,23 @@ After=network.target
 [Service]
 Type=simple
 User=yourusername
-ExecStart=/path/to/clipboard-sync server
+ExecStart=/path/to/copi server
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+如果在无图形界面的服务器上，使用 relay-only 模式：
+```ini
+[Unit]
+Description=Clipboard Sync Relay Service
+After=network.target
+
+[Service]
+Type=simple
+User=yourusername
+ExecStart=/path/to/copi server --relay-only
 Restart=always
 
 [Install]
@@ -162,8 +200,8 @@ WantedBy=multi-user.target
 
 启动服务:
 ```bash
-sudo systemctl enable clipboard-sync
-sudo systemctl start clipboard-sync
+sudo systemctl enable copi
+sudo systemctl start copi
 ```
 
 ## 故障排除

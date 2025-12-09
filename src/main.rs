@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use tokio::sync::{broadcast, mpsc};
 
 #[derive(Parser)]
-#[command(name = "clipboard-sync")]
+#[command(name = "copi")]
 #[command(about = "A cross-platform clipboard synchronization tool", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -20,6 +20,10 @@ enum Commands {
     Server {
         #[arg(short, long, default_value = "0.0.0.0:9527")]
         addr: SocketAddr,
+
+        /// 只转发模式：不访问剪贴板，仅在客户端之间转发数据（适用于无图形界面的服务器）
+        #[arg(short, long)]
+        relay_only: bool,
     },
     Client {
         #[arg(short, long)]
@@ -35,8 +39,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Server { addr } => {
-            run_server(addr).await?;
+        Commands::Server { addr, relay_only } => {
+            run_server(addr, relay_only).await?;
         }
         Commands::Client { server, listen } => {
             run_client(server, listen).await?;
@@ -46,9 +50,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_server(addr: SocketAddr) -> Result<()> {
+async fn run_server(addr: SocketAddr, relay_only: bool) -> Result<()> {
     println!("Starting clipboard sync server...");
     println!("Platform: {}", std::env::consts::OS);
+    
+    if relay_only {
+        println!("Running in relay-only mode (no clipboard access)");
+    }
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     let (broadcast_tx, _) = broadcast::channel::<ClipboardMessage>(100);
@@ -61,67 +69,97 @@ async fn run_server(addr: SocketAddr) -> Result<()> {
         }
     });
 
-    let broadcast_for_clipboard = broadcast_tx.clone();
-    let clipboard_handle = tokio::spawn(async move {
-        let mut clipboard = match ClipboardMonitor::new() {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Failed to create clipboard monitor: {}", e);
-                return;
+    if relay_only {
+        // 只转发模式：只接收来自客户端的消息并转发，不访问剪贴板
+        let receive_handle = tokio::spawn(async move {
+            while let Some(content) = rx.recv().await {
+                match &content {
+                    ClipboardContent::Text(text) => {
+                        println!("Received clipboard content from client: text ({} bytes), relaying to other clients...", text.len());
+                    }
+                    ClipboardContent::Image { width, height, .. } => {
+                        println!("Received clipboard content from client: image ({}x{}), relaying to other clients...", width, height);
+                    }
+                }
+                // 在只转发模式下，通过 broadcast 发送给其他客户端
+                let message = ClipboardMessage {
+                    content: content.clone(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                };
+                if let Err(e) = broadcast_tx.send(message) {
+                    eprintln!("Failed to broadcast: {}", e);
+                }
             }
-        };
+        });
 
-        if let Err(e) = clipboard.monitor(move |content| {
-            match &content {
-                ClipboardContent::Text(text) => {
-                    println!("Server clipboard changed: text ({} bytes), broadcasting to clients...", text.len());
+        tokio::try_join!(server_handle, receive_handle)?;
+    } else {
+        // 正常模式：访问剪贴板
+        let broadcast_for_clipboard = broadcast_tx.clone();
+        let clipboard_handle = tokio::spawn(async move {
+            let mut clipboard = match ClipboardMonitor::new() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to create clipboard monitor: {}", e);
+                    return;
                 }
-                ClipboardContent::Image { width, height, .. } => {
-                    println!("Server clipboard changed: image ({}x{}), broadcasting to clients...", width, height);
-                }
-            }
-            let message = ClipboardMessage {
-                content: content.clone(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
             };
-            if let Err(e) = broadcast_for_clipboard.send(message) {
-                eprintln!("Failed to broadcast: {}", e);
-            }
-            Ok(())
-        }).await {
-            eprintln!("Clipboard monitor error: {}", e);
-        }
-    });
 
-    let receive_handle = tokio::spawn(async move {
-        let mut clipboard = match ClipboardMonitor::new() {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Failed to create clipboard monitor for receiving: {}", e);
-                return;
-            }
-        };
-
-        while let Some(content) = rx.recv().await {
-            match &content {
-                ClipboardContent::Text(text) => {
-                    println!("Received clipboard content from client: text ({} bytes)", text.len());
+            if let Err(e) = clipboard.monitor(move |content| {
+                match &content {
+                    ClipboardContent::Text(text) => {
+                        println!("Server clipboard changed: text ({} bytes), broadcasting to clients...", text.len());
+                    }
+                    ClipboardContent::Image { width, height, .. } => {
+                        println!("Server clipboard changed: image ({}x{}), broadcasting to clients...", width, height);
+                    }
                 }
-                ClipboardContent::Image { width, height, .. } => {
-                    println!("Received clipboard content from client: image ({}x{})", width, height);
+                let message = ClipboardMessage {
+                    content: content.clone(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                };
+                if let Err(e) = broadcast_for_clipboard.send(message) {
+                    eprintln!("Failed to broadcast: {}", e);
+                }
+                Ok(())
+            }).await {
+                eprintln!("Clipboard monitor error: {}", e);
+            }
+        });
+
+        let receive_handle = tokio::spawn(async move {
+            let mut clipboard = match ClipboardMonitor::new() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to create clipboard monitor for receiving: {}", e);
+                    return;
+                }
+            };
+
+            while let Some(content) = rx.recv().await {
+                match &content {
+                    ClipboardContent::Text(text) => {
+                        println!("Received clipboard content from client: text ({} bytes)", text.len());
+                    }
+                    ClipboardContent::Image { width, height, .. } => {
+                        println!("Received clipboard content from client: image ({}x{})", width, height);
+                    }
+                }
+                // Update server's clipboard when receiving from client
+                if let Err(e) = clipboard.set_clipboard_content(&content) {
+                    eprintln!("Failed to set server clipboard: {}", e);
                 }
             }
-            // Update server's clipboard when receiving from client
-            if let Err(e) = clipboard.set_clipboard_content(&content) {
-                eprintln!("Failed to set server clipboard: {}", e);
-            }
-        }
-    });
+        });
 
-    tokio::try_join!(server_handle, clipboard_handle, receive_handle)?;
+        tokio::try_join!(server_handle, clipboard_handle, receive_handle)?;
+    }
 
     Ok(())
 }

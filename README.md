@@ -81,6 +81,18 @@ The default listening address is `0.0.0.0:9527`. You can also specify a custom a
 copi server --addr 0.0.0.0:8080
 ```
 
+**Relay-Only Mode** (for headless servers):
+
+If you need to run the server on a machine without a graphical interface or clipboard access (such as cloud servers or Docker containers), you can use the `--relay-only` flag. In this mode, the server only relays clipboard data between clients without attempting to access the local clipboard:
+
+```bash
+copi server --relay-only
+# Or with custom address
+copi server --addr 0.0.0.0:8080 --relay-only
+```
+
+This mode is particularly useful for cloud servers, Docker containers, or other headless environments.
+
 ### Client Mode
 
 Start the client on another machine:
