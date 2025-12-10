@@ -512,5 +512,4 @@ impl ClipboardMonitor {
             anyhow::bail!("wl-copy html failed")
         }
     }
-
 }
