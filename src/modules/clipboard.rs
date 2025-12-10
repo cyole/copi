@@ -2,8 +2,6 @@ use crate::modules::sync::ClipboardContent;
 use anyhow::Result;
 use arboard::{Clipboard, ImageData};
 use sha2::{Digest, Sha256};
-use std::time::Duration;
-use tokio::time::sleep;
 
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -515,15 +513,4 @@ impl ClipboardMonitor {
         }
     }
 
-    pub async fn monitor<F>(&mut self, mut callback: F) -> Result<()>
-    where
-        F: FnMut(ClipboardContent) -> Result<()>,
-    {
-        loop {
-            if let Some(content) = self.get_clipboard_content()? {
-                callback(content)?;
-            }
-            sleep(Duration::from_millis(500)).await;
-        }
-    }
 }
