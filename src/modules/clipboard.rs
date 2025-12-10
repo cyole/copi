@@ -8,6 +8,11 @@ use tokio::time::sleep;
 #[cfg(target_os = "linux")]
 use std::process::Command;
 
+// 图片大小限制：10MB
+const MAX_IMAGE_SIZE: usize = 10 * 1024 * 1024;
+// 图片尺寸限制：4096x4096
+const MAX_IMAGE_DIMENSION: u32 = 4096;
+
 #[derive(Debug, Clone, Copy)]
 enum ClipboardBackend {
     Arboard,
@@ -79,6 +84,11 @@ impl ClipboardMonitor {
                 hasher.update(&width.to_le_bytes());
                 hasher.update(&height.to_le_bytes());
             }
+            ClipboardContent::Html { html, text } => {
+                hasher.update(b"html:");
+                hasher.update(html.as_bytes());
+                hasher.update(text.as_bytes());
+            }
         }
         format!("{:x}", hasher.finalize())
     }
@@ -141,18 +151,59 @@ impl ClipboardMonitor {
     }
 
     fn image_data_to_png(img: &ImageData) -> Result<Vec<u8>> {
-        use image::{ImageBuffer, RgbaImage};
+        use image::{DynamicImage, ImageBuffer, RgbaImage};
         use std::io::Cursor;
 
-        // Convert ImageData bytes to RgbaImage
-        let img_buffer: RgbaImage =
-            ImageBuffer::from_raw(img.width as u32, img.height as u32, img.bytes.to_vec())
-                .ok_or_else(|| anyhow::anyhow!("Failed to create image buffer"))?;
+        let width = img.width as u32;
+        let height = img.height as u32;
 
-        // Encode as PNG
+        // 检查图片尺寸
+        if width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION {
+            anyhow::bail!(
+                "Image dimensions too large: {}x{} (max: {}x{})",
+                width,
+                height,
+                MAX_IMAGE_DIMENSION,
+                MAX_IMAGE_DIMENSION
+            );
+        }
+
+        // Convert ImageData bytes to RgbaImage
+        let img_buffer: RgbaImage = ImageBuffer::from_raw(width, height, img.bytes.to_vec())
+            .ok_or_else(|| anyhow::anyhow!("Failed to create image buffer"))?;
+
+        // 如果图片太大，进行缩放
+        let mut dynamic_img = DynamicImage::ImageRgba8(img_buffer);
+        let estimated_size = width as usize * height as usize * 4;
+
+        if estimated_size > MAX_IMAGE_SIZE {
+            let scale = (MAX_IMAGE_SIZE as f64 / estimated_size as f64).sqrt();
+            let new_width = (width as f64 * scale) as u32;
+            let new_height = (height as f64 * scale) as u32;
+
+            println!(
+                "Resizing image from {}x{} to {}x{} to fit size limit",
+                width, height, new_width, new_height
+            );
+
+            dynamic_img =
+                dynamic_img.resize(new_width, new_height, image::imageops::FilterType::Lanczos3);
+        }
+
+        // Encode as PNG with compression
         let mut png_data = Vec::new();
         let mut cursor = Cursor::new(&mut png_data);
-        img_buffer.write_to(&mut cursor, image::ImageFormat::Png)?;
+
+        dynamic_img.write_to(&mut cursor, image::ImageFormat::Png)?;
+
+        // 再次检查编码后的大小
+        if png_data.len() > MAX_IMAGE_SIZE {
+            anyhow::bail!(
+                "Encoded image too large: {} bytes (max: {} bytes)",
+                png_data.len(),
+                MAX_IMAGE_SIZE
+            );
+        }
 
         Ok(png_data)
     }
@@ -251,6 +302,12 @@ impl ClipboardMonitor {
                             .set_image(img_data)
                             .map_err(|e| anyhow::anyhow!("Failed to set clipboard image: {}", e))?;
                     }
+                    ClipboardContent::Html { html: _, text } => {
+                        // arboard 不直接支持 HTML，使用纯文本回退
+                        clipboard.set_text(text).map_err(|e| {
+                            anyhow::anyhow!("Failed to set clipboard HTML as text: {}", e)
+                        })?;
+                    }
                 }
             }
             #[cfg(target_os = "linux")]
@@ -260,6 +317,9 @@ impl ClipboardMonitor {
                 }
                 ClipboardContent::Image { data, .. } => {
                     Self::wl_copy_image(data)?;
+                }
+                ClipboardContent::Html { html, text: _ } => {
+                    Self::wl_copy_html(html)?;
                 }
             },
         }
@@ -311,6 +371,29 @@ impl ClipboardMonitor {
             Ok(())
         } else {
             anyhow::bail!("wl-copy image failed")
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wl_copy_html(html: &str) -> Result<()> {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        let mut child = Command::new("wl-copy")
+            .arg("--type")
+            .arg("text/html")
+            .stdin(Stdio::piped())
+            .spawn()?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(html.as_bytes())?;
+        }
+
+        let status = child.wait()?;
+        if status.success() {
+            Ok(())
+        } else {
+            anyhow::bail!("wl-copy html failed")
         }
     }
 

@@ -80,6 +80,9 @@ async fn run_server(addr: SocketAddr, relay_only: bool) -> Result<()> {
                     ClipboardContent::Image { width, height, .. } => {
                         println!("Received clipboard content from client: image ({}x{}), relaying to other clients...", width, height);
                     }
+                    ClipboardContent::Html { html, .. } => {
+                        println!("Received clipboard content from client: html ({} bytes), relaying to other clients...", html.len());
+                    }
                 }
                 // 在只转发模式下，通过 broadcast 发送给其他客户端（保留 client_id）
                 if let Err(e) = broadcast_tx.send(message) {
@@ -108,6 +111,9 @@ async fn run_server(addr: SocketAddr, relay_only: bool) -> Result<()> {
                     }
                     ClipboardContent::Image { width, height, .. } => {
                         println!("Server clipboard changed: image ({}x{}), broadcasting to clients...", width, height);
+                    }
+                    ClipboardContent::Html { html, .. } => {
+                        println!("Server clipboard changed: html ({} bytes), broadcasting to clients...", html.len());
                     }
                 }
                 let message = ClipboardMessage {
@@ -148,6 +154,12 @@ async fn run_server(addr: SocketAddr, relay_only: bool) -> Result<()> {
                         println!(
                             "Received clipboard content from client: image ({}x{})",
                             width, height
+                        );
+                    }
+                    ClipboardContent::Html { html, .. } => {
+                        println!(
+                            "Received clipboard content from client: html ({} bytes)",
+                            html.len()
                         );
                     }
                 }
@@ -254,6 +266,12 @@ async fn run_client(server_addr: SocketAddr, _listen_addr: SocketAddr) -> Result
                                     width, height
                                 );
                             }
+                            ClipboardContent::Html { html, .. } => {
+                                println!(
+                                    "Local clipboard changed, sending to server: html ({} bytes)",
+                                    html.len()
+                                );
+                            }
                         }
                         if let Err(e) = to_server_tx.send(content) {
                             eprintln!("Failed to send to server: {}", e);
@@ -278,6 +296,12 @@ async fn run_client(server_addr: SocketAddr, _listen_addr: SocketAddr) -> Result
                             println!(
                                 "Received clipboard from server: image ({}x{})",
                                 width, height
+                            );
+                        }
+                        ClipboardContent::Html { html, .. } => {
+                            println!(
+                                "Received clipboard from server: html ({} bytes)",
+                                html.len()
                             );
                         }
                     }

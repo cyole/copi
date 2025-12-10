@@ -15,6 +15,13 @@ pub enum ClipboardContent {
         width: u32,
         height: u32,
     },
+    Html {
+        // HTML content
+        html: String,
+        // Plain text fallback
+        #[serde(default)]
+        text: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
