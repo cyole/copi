@@ -122,7 +122,9 @@ impl ClipboardMonitor {
                             clipboard
                                 .get_text()
                                 .map(ClipboardContent::Text)
-                                .map_err(|e| anyhow::anyhow!("Failed to get clipboard content: {}", e))
+                                .map_err(|e| {
+                                    anyhow::anyhow!("Failed to get clipboard content: {}", e)
+                                })
                         }
                     }
                 } else {
@@ -189,11 +191,11 @@ impl ClipboardMonitor {
             .ok_or_else(|| anyhow::anyhow!("Failed to create image buffer"))?;
 
         let mut dynamic_img = DynamicImage::ImageRgba8(img_buffer);
-        
+
         // 计算初始缩放尺寸
         let mut target_width = width.min(MAX_IMAGE_DIMENSION);
         let mut target_height = height.min(MAX_IMAGE_DIMENSION);
-        
+
         // 保持宽高比
         if width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION {
             let scale = (MAX_IMAGE_DIMENSION as f64 / width.max(height) as f64).min(1.0);
@@ -207,7 +209,7 @@ impl ClipboardMonitor {
             let scale = ((MAX_IMAGE_SIZE * 2) as f64 / estimated_size as f64).sqrt();
             target_width = (target_width as f64 * scale) as u32;
             target_height = (target_height as f64 * scale) as u32;
-            
+
             println!(
                 "Pre-scaling image from {}x{} to {}x{} for size limit",
                 width, height, target_width, target_height
@@ -226,10 +228,10 @@ impl ClipboardMonitor {
         // 尝试编码，如果太大则继续缩小
         let mut attempts = 0;
         let max_attempts = 3;
-        
+
         loop {
             attempts += 1;
-            
+
             // Encode as PNG
             let mut png_data = Vec::new();
             let mut cursor = Cursor::new(&mut png_data);
@@ -320,14 +322,14 @@ impl ClipboardMonitor {
 
         if output.status.success() && !output.stdout.is_empty() {
             let png_data = &output.stdout;
-            
+
             // 检查大小
             if png_data.len() > MAX_IMAGE_SIZE {
                 println!(
                     "Clipboard image too large ({} bytes), reprocessing...",
                     png_data.len()
                 );
-                
+
                 // 解码并重新处理
                 use image::ImageReader;
                 use std::io::Cursor;
@@ -340,13 +342,13 @@ impl ClipboardMonitor {
                 let rgba = img.to_rgba8();
                 let width = img.width();
                 let height = img.height();
-                
+
                 let img_data = ImageData {
                     width: width as usize,
                     height: height as usize,
                     bytes: std::borrow::Cow::Owned(rgba.into_raw()),
                 };
-                
+
                 // 使用我们的压缩函数
                 let compressed_png = Self::image_data_to_png(&img_data)?;
                 let base64_data = base64::Engine::encode(
