@@ -21,6 +21,8 @@ pub enum ClipboardContent {
 pub struct ClipboardMessage {
     pub content: ClipboardContent,
     pub timestamp: u64,
+    #[serde(default)]
+    pub client_id: Option<String>,
 }
 
 // Helper functions for length-prefixed message protocol
@@ -74,14 +76,14 @@ async fn write_message<T: Serialize>(writer: &mut OwnedWriteHalf, message: &T) -
 
 pub struct SyncServer {
     addr: SocketAddr,
-    tx: mpsc::UnboundedSender<ClipboardContent>,
+    tx: mpsc::UnboundedSender<ClipboardMessage>,
     broadcast_tx: broadcast::Sender<ClipboardMessage>,
 }
 
 impl SyncServer {
     pub fn new(
         addr: SocketAddr,
-        tx: mpsc::UnboundedSender<ClipboardContent>,
+        tx: mpsc::UnboundedSender<ClipboardMessage>,
         broadcast_tx: broadcast::Sender<ClipboardMessage>,
     ) -> Self {
         Self {
@@ -111,7 +113,7 @@ impl SyncServer {
 
     async fn handle_client(
         socket: TcpStream,
-        tx: mpsc::UnboundedSender<ClipboardContent>,
+        tx: mpsc::UnboundedSender<ClipboardMessage>,
         mut broadcast_rx: broadcast::Receiver<ClipboardMessage>,
     ) -> Result<()> {
         let (mut read_half, mut write_half) = socket.into_split();
@@ -121,7 +123,7 @@ impl SyncServer {
             loop {
                 match read_message::<ClipboardMessage>(&mut read_half).await {
                     Ok(message) => {
-                        if let Err(e) = tx.send(message.content) {
+                        if let Err(e) = tx.send(message) {
                             eprintln!("Failed to send to channel: {}", e);
                             break;
                         }
@@ -169,16 +171,17 @@ impl SyncServer {
 #[derive(Clone)]
 pub struct SyncClient {
     addr: SocketAddr,
+    client_id: String,
 }
 
 impl SyncClient {
-    pub fn new(addr: SocketAddr) -> Self {
-        Self { addr }
+    pub fn new(addr: SocketAddr, client_id: String) -> Self {
+        Self { addr, client_id }
     }
 
     pub async fn connect_bidirectional(
         &self,
-        tx: mpsc::UnboundedSender<ClipboardContent>,
+        tx: mpsc::UnboundedSender<ClipboardMessage>,
         mut rx: broadcast::Receiver<ClipboardContent>,
     ) -> Result<()> {
         let stream = TcpStream::connect(self.addr).await?;
@@ -191,7 +194,7 @@ impl SyncClient {
             loop {
                 match read_message::<ClipboardMessage>(&mut read_half).await {
                     Ok(message) => {
-                        if let Err(e) = tx.send(message.content) {
+                        if let Err(e) = tx.send(message) {
                             eprintln!("Failed to send received message: {}", e);
                             break;
                         }
@@ -209,6 +212,7 @@ impl SyncClient {
         });
 
         // Task to send messages to server
+        let client_id = self.client_id.clone();
         let send_handle = tokio::spawn(async move {
             loop {
                 match rx.recv().await {
@@ -219,6 +223,7 @@ impl SyncClient {
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap()
                                 .as_secs(),
+                            client_id: Some(client_id.clone()),
                         };
 
                         if let Err(e) = write_message(&mut write_half, &message).await {
