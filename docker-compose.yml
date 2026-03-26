@@ -1,0 +1,9 @@
+services:
+  copi-server:
+    build: .
+    ports:
+      - "9527:9527"
+    environment:
+      - COPI_TOKEN=${COPI_TOKEN:-changeme}
+    command: ["server", "--relay-only", "--addr", "0.0.0.0:9527", "--tls-auto-cert"]
+    restart: unless-stopped

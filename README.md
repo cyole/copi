@@ -18,6 +18,9 @@ A cross-platform clipboard synchronization tool for Linux and macOS, written in 
 - 🚀 Lightweight and high-performance
 - 🔒 Uses SHA-256 to avoid duplicate synchronization
 - 🎯 Full Wayland support (using wl-clipboard)
+- 🔑 Token-based authentication (HMAC-SHA256 challenge-response, token never sent over the wire)
+- 🔐 TLS encryption (auto-generated self-signed certs or bring your own)
+- 🐳 Docker support for headless relay servers
 
 ## System Requirements
 
@@ -126,6 +129,44 @@ copi server --addr 0.0.0.0:8080 --relay-only
 
 This mode is particularly useful for cloud servers, Docker containers, or other headless environments.
 
+**Token Authentication:**
+
+You can require clients to authenticate with a token before syncing. The token is never sent over the network — instead, an HMAC-SHA256 challenge-response protocol is used:
+
+1. Server sends a random nonce to the client
+2. Client computes `HMAC-SHA256(token, nonce)` and sends back the hash
+3. Server verifies using constant-time comparison
+
+This prevents eavesdropping and replay attacks even without TLS.
+
+```bash
+# Via CLI flag
+copi server --token my-secret-token
+
+# Via environment variable
+export COPI_TOKEN=my-secret-token
+copi server
+```
+
+When a token is set, only clients providing the matching token will be allowed to connect. Without `--token`, the server accepts all connections (backward-compatible).
+
+**TLS Encryption:**
+
+Enable TLS to encrypt all traffic (clipboard data, images, auth handshake):
+
+```bash
+# Auto-generate a self-signed certificate (development/testing)
+copi server --tls-auto-cert
+
+# Use your own certificate files
+copi server --cert /path/to/cert.pem --key /path/to/key.pem
+
+# Combine with token authentication
+copi server --token my-secret-token --tls-auto-cert
+```
+
+TLS is optional. Without TLS flags, the server runs plain TCP (backward-compatible).
+
 ### Client Mode
 
 Start the client on another machine:
@@ -138,6 +179,28 @@ For example:
 
 ```bash
 copi client --server 192.168.1.100:9527
+```
+
+If the server requires token authentication, pass the same token:
+
+```bash
+copi client --server 192.168.1.100:9527 --token my-secret-token
+
+# Or via environment variable
+COPI_TOKEN=my-secret-token copi client --server 192.168.1.100:9527
+```
+
+If the server has TLS enabled, the client must also enable TLS:
+
+```bash
+# With a CA certificate for verification
+copi client --server 192.168.1.100:9527 --ca-cert /path/to/ca.pem
+
+# Skip certificate verification (for self-signed certs)
+copi client --server 192.168.1.100:9527 --tls-skip-verify
+
+# Full setup: TLS + token
+copi client --server 192.168.1.100:9527 --token my-secret-token --tls-skip-verify
 ```
 
 The client automatically monitors local clipboard changes (including text and images) and syncs with the server.
@@ -173,7 +236,8 @@ src/
 └── modules/
     ├── mod.rs             # Module declarations
     ├── clipboard.rs       # Clipboard monitoring module
-    └── sync.rs            # Network synchronization module
+    ├── sync.rs            # Network synchronization module
+    └── tls.rs             # TLS configuration and certificate handling
 ```
 
 ## Dependencies
@@ -183,15 +247,54 @@ src/
 - `serde` / `serde_json` - Serialization and deserialization
 - `anyhow` - Error handling
 - `clap` - Command-line argument parsing
-- `sha2` - SHA-256 hash computation
+- `sha2` / `hmac` - HMAC-SHA256 authentication
+- `tokio-rustls` / `rustls` - TLS encryption
+- `rcgen` - Self-signed certificate generation
 - `base64` - Image data encoding
 - `image` - Image processing and format conversion
 
+### Docker
+
+Run the server as a Docker container with TLS and token authentication:
+
+```bash
+# Build the image
+docker build -t copi-server .
+
+# Run with token + auto-generated TLS cert
+docker run -d -p 9527:9527 -e COPI_TOKEN=my-secret-token copi-server
+
+# Or with your own certificates
+docker run -d -p 9527:9527 \
+  -e COPI_TOKEN=my-secret-token \
+  -v /path/to/certs:/certs:ro \
+  copi-server server --relay-only --addr 0.0.0.0:9527 \
+  --cert /certs/cert.pem --key /certs/key.pem
+```
+
+Or use Docker Compose:
+
+```bash
+# Set your token
+echo "COPI_TOKEN=my-secret-token" > .env
+
+# Start
+docker compose up -d
+```
+
+Then connect clients:
+
+```bash
+copi client --server YOUR_SERVER_IP:9527 --token my-secret-token --tls-skip-verify
+```
+
 ## Security Considerations
 
-- The current implementation transmits clipboard content in plain text
-- Recommended for use in trusted network environments
-- Future versions may add TLS/SSL encryption support
+- **Token authentication** uses HMAC-SHA256 challenge-response — the token is never transmitted over the network, preventing eavesdropping and replay attacks
+- **TLS encryption** protects all traffic (clipboard content, images, auth handshake) from interception
+- For maximum security, use both TLS and token authentication together
+- The `--tls-skip-verify` flag disables certificate verification and should only be used with self-signed certs in trusted environments
+- For production deployments, use proper CA-signed certificates with `--cert`/`--key` on the server and `--ca-cert` on clients
 
 ## License
 
