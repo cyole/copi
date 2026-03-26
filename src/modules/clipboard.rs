@@ -1,15 +1,19 @@
-use crate::modules::sync::ClipboardContent;
+use crate::modules::sync::{ClipboardContent, CopiedFile};
 use anyhow::Result;
 use arboard::{Clipboard, ImageData};
+use base64::Engine;
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 
 // 图片大小限制：5MB
 const MAX_IMAGE_SIZE: usize = 5 * 1024 * 1024;
 // 图片尺寸限制：4096x4096
 const MAX_IMAGE_DIMENSION: u32 = 4096;
+// Default max file size for clipboard file copy: 50MB
+const DEFAULT_MAX_CLIPBOARD_FILE_SIZE: u64 = 50 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 enum ClipboardBackend {
@@ -22,10 +26,16 @@ pub struct ClipboardMonitor {
     clipboard: Option<Clipboard>,
     backend: ClipboardBackend,
     last_hash: Option<String>,
+    max_file_size: u64,
+    /// Temp dir for writing received clipboard files so Ctrl+V works
+    recv_dir: PathBuf,
 }
 
 impl ClipboardMonitor {
-    pub fn new() -> Result<Self> {
+    pub fn new(max_file_size: Option<u64>) -> Result<Self> {
+        let max_file_size = max_file_size.unwrap_or(DEFAULT_MAX_CLIPBOARD_FILE_SIZE);
+        let recv_dir = Self::init_recv_dir()?;
+
         // Try to detect if we're running on Wayland
         #[cfg(target_os = "linux")]
         {
@@ -39,6 +49,8 @@ impl ClipboardMonitor {
                         clipboard: None,
                         backend: ClipboardBackend::WlClipboard,
                         last_hash: None,
+                        max_file_size,
+                        recv_dir,
                     });
                 } else {
                     println!(
@@ -57,7 +69,22 @@ impl ClipboardMonitor {
             clipboard: Some(Clipboard::new()?),
             backend: ClipboardBackend::Arboard,
             last_hash: None,
+            max_file_size,
+            recv_dir,
         })
+    }
+
+    fn init_recv_dir() -> Result<PathBuf> {
+        let base = std::env::var("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/tmp"));
+        let dir = base.join("copi-clipboard-files");
+        // Clean up old files from previous session
+        if dir.exists() {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
     }
 
     #[cfg(target_os = "linux")]
@@ -87,6 +114,19 @@ impl ClipboardMonitor {
                 hasher.update(html.as_bytes());
                 hasher.update(text.as_bytes());
             }
+            ClipboardContent::File { path, data, size } => {
+                hasher.update(b"file:");
+                hasher.update(path.as_bytes());
+                hasher.update(data.as_bytes());
+                hasher.update(&size.to_le_bytes());
+            }
+            ClipboardContent::FileCopy { files } => {
+                hasher.update(b"filecopy:");
+                for f in files {
+                    hasher.update(f.name.as_bytes());
+                    hasher.update(&f.size.to_le_bytes());
+                }
+            }
         }
         format!("{:x}", hasher.finalize())
     }
@@ -94,6 +134,12 @@ impl ClipboardMonitor {
     pub fn get_clipboard_content(&mut self) -> Result<Option<ClipboardContent>> {
         let content_result: Result<ClipboardContent> = match self.backend {
             ClipboardBackend::Arboard => {
+                // On macOS, check for file URIs first (Cmd+C on files in Finder)
+                #[cfg(target_os = "macos")]
+                if let Some(files) = self.macos_paste_files() {
+                    return self.dedup(ClipboardContent::FileCopy { files });
+                }
+
                 let clipboard = self
                     .clipboard
                     .as_mut()
@@ -135,11 +181,14 @@ impl ClipboardMonitor {
             }
             #[cfg(target_os = "linux")]
             ClipboardBackend::WlClipboard => {
-                // Try to get image first
+                // Check for file URIs first (Ctrl+C on files in file manager)
+                if let Some(files) = self.wl_paste_files() {
+                    return self.dedup(ClipboardContent::FileCopy { files });
+                }
+                // Try to get image
                 match Self::wl_paste_image() {
                     Ok(img_data) => Ok(img_data),
                     Err(e) => {
-                        // 记录图片获取失败，但不是错误（可能剪贴板中没有图片）
                         if !e.to_string().contains("wl-paste image failed") {
                             eprintln!("Failed to get image from clipboard: {}", e);
                         }
@@ -151,18 +200,8 @@ impl ClipboardMonitor {
         };
 
         match content_result {
-            Ok(content) => {
-                let hash = Self::hash_content(&content);
-
-                if self.last_hash.as_ref() != Some(&hash) {
-                    self.last_hash = Some(hash);
-                    Ok(Some(content))
-                } else {
-                    Ok(None)
-                }
-            }
+            Ok(content) => self.dedup(content),
             Err(e) => {
-                // 记录错误但不中断程序
                 eprintln!("Error reading clipboard: {}", e);
                 Ok(None)
             }
@@ -300,6 +339,94 @@ impl ClipboardMonitor {
         })
     }
 
+    fn dedup(&mut self, content: ClipboardContent) -> Result<Option<ClipboardContent>> {
+        let hash = Self::hash_content(&content);
+        if self.last_hash.as_ref() != Some(&hash) {
+            self.last_hash = Some(hash);
+            Ok(Some(content))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Check if clipboard contains file URIs (from Ctrl+C in file manager).
+    /// Returns the files with their content if detected.
+    #[cfg(target_os = "linux")]
+    fn wl_paste_files(&self) -> Option<Vec<CopiedFile>> {
+        // Check what types are available on the clipboard
+        let types_output = Command::new("wl-paste")
+            .arg("--list-types")
+            .output()
+            .ok()?;
+        let types = String::from_utf8_lossy(&types_output.stdout);
+        if !types.lines().any(|t| t.trim() == "text/uri-list") {
+            return None;
+        }
+
+        // Get the URI list
+        let uri_output = Command::new("wl-paste")
+            .arg("--type")
+            .arg("text/uri-list")
+            .output()
+            .ok()?;
+        if !uri_output.status.success() {
+            return None;
+        }
+        let uri_text = String::from_utf8_lossy(&uri_output.stdout);
+
+        let mut files = Vec::new();
+        for line in uri_text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            // Parse file:// URI
+            let path = if let Some(p) = line.strip_prefix("file://") {
+                // URL-decode the path
+                percent_decode(p)
+            } else {
+                continue;
+            };
+
+            let path = std::path::Path::new(&path);
+            if !path.is_file() {
+                continue;
+            }
+
+            let metadata = std::fs::metadata(path).ok()?;
+            let size = metadata.len();
+            if size > self.max_file_size {
+                eprintln!(
+                    "Skipping clipboard file {} ({} bytes, max {} bytes)",
+                    path.display(),
+                    size,
+                    self.max_file_size
+                );
+                continue;
+            }
+
+            let data = std::fs::read(path).ok()?;
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+
+            files.push(CopiedFile {
+                name,
+                data: encoded,
+                size,
+            });
+        }
+
+        if files.is_empty() {
+            None
+        } else {
+            Some(files)
+        }
+    }
+
     #[cfg(target_os = "linux")]
     fn wl_paste() -> Result<String> {
         let output = Command::new("wl-paste").arg("--no-newline").output()?;
@@ -387,6 +514,36 @@ impl ClipboardMonitor {
     }
 
     pub fn set_clipboard_content(&mut self, content: &ClipboardContent) -> Result<()> {
+        // Handle FileCopy before borrowing clipboard to avoid borrow conflicts
+        if let ClipboardContent::FileCopy { files } = content {
+            let paths = self.write_files_to_recv_dir(files)?;
+            match self.backend {
+                ClipboardBackend::Arboard => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        Self::macos_copy_files(&paths)?;
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        let clipboard = self
+                            .clipboard
+                            .as_mut()
+                            .ok_or_else(|| anyhow::anyhow!("Clipboard not initialized"))?;
+                        let text = paths.join("\n");
+                        clipboard.set_text(&text).map_err(|e| {
+                            anyhow::anyhow!("Failed to set clipboard: {}", e)
+                        })?;
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                ClipboardBackend::WlClipboard => {
+                    Self::wl_copy_file_uris(&paths)?;
+                }
+            }
+            self.last_hash = Some(Self::hash_content(content));
+            return Ok(());
+        }
+
         match self.backend {
             ClipboardBackend::Arboard => {
                 let clipboard = self
@@ -405,24 +562,22 @@ impl ClipboardMonitor {
                         width,
                         height,
                     } => {
-                        // Decode base64
                         let png_data = base64::Engine::decode(
                             &base64::engine::general_purpose::STANDARD,
                             data,
                         )?;
-
-                        // Convert to ImageData
                         let img_data = Self::png_to_image_data(&png_data, *width, *height)?;
-
                         clipboard
                             .set_image(img_data)
                             .map_err(|e| anyhow::anyhow!("Failed to set clipboard image: {}", e))?;
                     }
                     ClipboardContent::Html { html: _, text } => {
-                        // arboard 不直接支持 HTML，使用纯文本回退
                         clipboard.set_text(text).map_err(|e| {
                             anyhow::anyhow!("Failed to set clipboard HTML as text: {}", e)
                         })?;
+                    }
+                    ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } => {
+                        return Ok(());
                     }
                 }
             }
@@ -436,6 +591,9 @@ impl ClipboardMonitor {
                 }
                 ClipboardContent::Html { html, text: _ } => {
                     Self::wl_copy_html(html)?;
+                }
+                ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } => {
+                    return Ok(());
                 }
             },
         }
@@ -512,4 +670,204 @@ impl ClipboardMonitor {
             anyhow::bail!("wl-copy html failed")
         }
     }
+
+    /// Detect files on macOS clipboard (Cmd+C in Finder).
+    #[cfg(target_os = "macos")]
+    fn macos_paste_files(&self) -> Option<Vec<CopiedFile>> {
+        // Check if clipboard contains file references using osascript
+        let output = Command::new("osascript")
+            .arg("-e")
+            .arg("clipboard info")
+            .output()
+            .ok()?;
+
+        let info = String::from_utf8_lossy(&output.stdout);
+        // Finder file copies show «class furl» in clipboard info
+        if !info.contains("furl") {
+            return None;
+        }
+
+        // Get file paths from clipboard
+        let output = Command::new("osascript")
+            .arg("-e")
+            .arg(
+                r#"
+set output to ""
+try
+    set clipData to the clipboard as «class furl»
+    set output to POSIX path of clipData
+on error
+    try
+        set clipList to the clipboard as list
+        repeat with f in clipList
+            try
+                set output to output & POSIX path of (f as «class furl») & linefeed
+            end try
+        end repeat
+    end try
+end try
+return output
+"#,
+            )
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let paths_text = String::from_utf8_lossy(&output.stdout);
+        let mut files = Vec::new();
+
+        for line in paths_text.lines() {
+            let path = line.trim();
+            if path.is_empty() {
+                continue;
+            }
+            let p = std::path::Path::new(path);
+            if !p.is_file() {
+                continue;
+            }
+            let metadata = std::fs::metadata(p).ok()?;
+            let size = metadata.len();
+            if size > self.max_file_size {
+                eprintln!(
+                    "Skipping clipboard file {} ({} bytes, max {} bytes)",
+                    path, size, self.max_file_size
+                );
+                continue;
+            }
+            let data = std::fs::read(p).ok()?;
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+            files.push(CopiedFile {
+                name,
+                data: encoded,
+                size,
+            });
+        }
+
+        if files.is_empty() {
+            None
+        } else {
+            Some(files)
+        }
+    }
+
+    /// Set macOS clipboard to file references so Cmd+V in Finder pastes them.
+    #[cfg(target_os = "macos")]
+    fn macos_copy_files(paths: &[String]) -> Result<()> {
+        // Build AppleScript to set clipboard to POSIX file references
+        let file_refs: Vec<String> = paths
+            .iter()
+            .map(|p| format!("POSIX file \"{}\"", p.replace('\"', "\\\"")))
+            .collect();
+
+        let script = if file_refs.len() == 1 {
+            format!("set the clipboard to {}", file_refs[0])
+        } else {
+            format!("set the clipboard to {{{}}}", file_refs.join(", "))
+        };
+
+        let output = Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output()?;
+
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("osascript failed to set clipboard files: {}", err);
+        }
+
+        Ok(())
+    }
+
+    /// Write received files to the temp receive directory.
+    /// Returns the list of full paths written.
+    fn write_files_to_recv_dir(&self, files: &[CopiedFile]) -> Result<Vec<String>> {
+        // Clear old files
+        if self.recv_dir.exists() {
+            let _ = std::fs::remove_dir_all(&self.recv_dir);
+        }
+        std::fs::create_dir_all(&self.recv_dir)?;
+
+        let mut paths = Vec::new();
+        for file in files {
+            // Sanitize filename
+            let name = std::path::Path::new(&file.name)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let dest = self.recv_dir.join(&name);
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(&file.data)
+                .map_err(|e| anyhow::anyhow!("Failed to decode file: {}", e))?;
+            std::fs::write(&dest, &data)?;
+            paths.push(dest.to_string_lossy().to_string());
+        }
+        Ok(paths)
+    }
+
+    /// Set clipboard to file URIs via wl-copy so Ctrl+V pastes the files.
+    #[cfg(target_os = "linux")]
+    fn wl_copy_file_uris(paths: &[String]) -> Result<()> {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        // Build URI list
+        let uri_list: String = paths
+            .iter()
+            .map(|p| format!("file://{}", p))
+            .collect::<Vec<_>>()
+            .join("\r\n");
+
+        // Set text/uri-list so file managers recognize it
+        let mut child = Command::new("wl-copy")
+            .arg("--type")
+            .arg("text/uri-list")
+            .stdin(Stdio::piped())
+            .spawn()?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(uri_list.as_bytes())?;
+            stdin.write_all(b"\r\n")?;
+        }
+
+        let status = child.wait()?;
+        if !status.success() {
+            anyhow::bail!("wl-copy file URIs failed");
+        }
+
+        Ok(())
+    }
+}
+
+/// Simple percent-decoding for file:// URIs.
+fn percent_decode(s: &str) -> String {
+    let mut result = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(val) = u8::from_str_radix(
+                &String::from_utf8_lossy(&bytes[i + 1..i + 3]),
+                16,
+            ) {
+                result.push(val);
+                i += 3;
+                continue;
+            }
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&result).to_string()
 }

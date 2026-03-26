@@ -205,11 +205,40 @@ copi client --server 192.168.1.100:9527 --token my-secret-token --tls-skip-verif
 
 The client automatically monitors local clipboard changes (including text and images) and syncs with the server.
 
-### Supported Clipboard Content
+### File Sync
 
-- ✅ Plain text
+Sync a directory across all connected peers using `--sync-dir`. Files in the directory are monitored for changes and automatically synced. Use `--max-file-size` to limit the maximum file size (in MB, default 10 MB).
+
+```bash
+# On each machine, point --sync-dir to the folder you want to keep in sync
+copi client --server 192.168.1.100:9527 --sync-dir ~/shared-files
+
+# Limit to files under 5 MB
+copi client --server 192.168.1.100:9527 --sync-dir ~/shared-files --max-file-size 5
+
+# Server in relay-only mode can also have a sync directory
+copi server --relay-only --sync-dir /data/shared
+```
+
+Subdirectories are synced recursively. Files are scanned every second and only transferred when content changes (SHA-256 deduplication).
+
+### Clipboard File Copy
+
+Copy files with Ctrl+C (or Cmd+C) on one machine, paste with Ctrl+V (or Cmd+V) on another — completely transparent. No sync folders needed. Works cross-platform between Linux and macOS.
+
+- **Linux (Wayland)**: Detects `text/uri-list` clipboard from file managers (Nautilus, Dolphin, Thunar, etc.)
+- **macOS**: Detects file references from Finder via `osascript`
+
+When you copy a file, copi reads its content, sends it over the network, writes it to a temp directory on the other machine, and sets the clipboard so paste works natively.
+
+The `--max-file-size` flag controls the maximum size for clipboard file transfers (default 10 MB).
+
+### Supported Content
+
+- ✅ Plain text clipboard
 - ✅ Images (PNG, JPEG, and other formats, internally converted to PNG)
-- ⏳ Future support may include: files, rich text, etc.
+- ✅ Native file copy/paste (Ctrl+C / Cmd+C → Ctrl+V / Cmd+V across machines, Linux Wayland + macOS)
+- ✅ Directory sync via `--sync-dir` (any file type, configurable size limit)
 
 ## How It Works
 

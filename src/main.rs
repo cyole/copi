@@ -3,9 +3,11 @@ mod modules;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use modules::clipboard::ClipboardMonitor;
+use modules::files::FileMonitor;
 use modules::sync::{ClipboardContent, ClipboardMessage, SyncClient, SyncServer};
 use modules::tls;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tokio::sync::{broadcast, mpsc};
 
 #[derive(Parser)]
@@ -42,6 +44,14 @@ enum Commands {
         /// Auto-generate a self-signed TLS certificate (for development/testing)
         #[arg(long)]
         tls_auto_cert: bool,
+
+        /// Directory to sync files from/to. Files in this directory are synced across all peers.
+        #[arg(long, env = "COPI_SYNC_DIR")]
+        sync_dir: Option<PathBuf>,
+
+        /// Maximum file size to sync in megabytes (default: 10 MB)
+        #[arg(long, default_value = "10")]
+        max_file_size: u64,
     },
     Client {
         #[arg(short, long)]
@@ -66,6 +76,14 @@ enum Commands {
         /// Skip TLS certificate verification (for self-signed certs)
         #[arg(long)]
         tls_skip_verify: bool,
+
+        /// Directory to sync files from/to. Files in this directory are synced across all peers.
+        #[arg(long, env = "COPI_SYNC_DIR")]
+        sync_dir: Option<PathBuf>,
+
+        /// Maximum file size to sync in megabytes (default: 10 MB)
+        #[arg(long, default_value = "10")]
+        max_file_size: u64,
     },
 }
 
@@ -81,8 +99,11 @@ async fn main() -> Result<()> {
             cert,
             key,
             tls_auto_cert,
+            sync_dir,
+            max_file_size,
         } => {
-            run_server(addr, relay_only, token, cert, key, tls_auto_cert).await?;
+            run_server(addr, relay_only, token, cert, key, tls_auto_cert, sync_dir, max_file_size)
+                .await?;
         }
         Commands::Client {
             server,
@@ -91,12 +112,139 @@ async fn main() -> Result<()> {
             tls,
             ca_cert,
             tls_skip_verify,
+            sync_dir,
+            max_file_size,
         } => {
-            run_client(server, listen, token, tls, ca_cert, tls_skip_verify).await?;
+            run_client(
+                server,
+                listen,
+                token,
+                tls,
+                ca_cert,
+                tls_skip_verify,
+                sync_dir,
+                max_file_size,
+            )
+            .await?;
         }
     }
 
     Ok(())
+}
+
+fn log_content(prefix: &str, content: &ClipboardContent) {
+    match content {
+        ClipboardContent::Text(text) => {
+            println!("{}: text ({} bytes)", prefix, text.len());
+        }
+        ClipboardContent::Image { width, height, .. } => {
+            println!("{}: image ({}x{})", prefix, width, height);
+        }
+        ClipboardContent::Html { html, .. } => {
+            println!("{}: html ({} bytes)", prefix, html.len());
+        }
+        ClipboardContent::File { path, size, .. } => {
+            println!("{}: file \"{}\" ({} bytes)", prefix, path, size);
+        }
+        ClipboardContent::FileCopy { files } => {
+            let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+            let total: u64 = files.iter().map(|f| f.size).sum();
+            println!(
+                "{}: {} file(s) [{}] ({} bytes)",
+                prefix,
+                files.len(),
+                names.join(", "),
+                total
+            );
+        }
+    }
+}
+
+/// Spawn a file monitoring task that scans the directory and sends changed files
+/// to the outbound channel, and receives inbound files from the network.
+/// Spawn a file monitoring task.
+/// - Scans `sync_dir` every second and sends changed files to `outbound_tx`.
+/// - Receives inbound file messages from `inbound_rx` and writes them to disk.
+fn spawn_file_sync_task(
+    sync_dir: PathBuf,
+    max_bytes: u64,
+    outbound_tx: mpsc::UnboundedSender<ClipboardContent>,
+    mut inbound_rx: mpsc::UnboundedReceiver<ClipboardMessage>,
+    client_id: Option<String>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let file_monitor = match FileMonitor::new(sync_dir, max_bytes) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("Failed to create file monitor: {}", e);
+                return;
+            }
+        };
+
+        println!("File sync active, scanning every 1s");
+
+        // Use a dedicated thread for file scanning to avoid being starved
+        // by blocking clipboard operations (wl-paste) on the tokio runtime.
+        // Both scanning and writing share a single FileMonitor via channels
+        // to keep hashes and suppression state consistent.
+        let (scan_result_tx, mut scan_result_rx) =
+            mpsc::unbounded_channel::<Vec<ClipboardContent>>();
+        let (write_req_tx, write_req_rx) =
+            std::sync::mpsc::channel::<(String, String, u64)>();
+
+        let scan_dir = file_monitor.sync_dir().to_path_buf();
+        let scan_max = file_monitor.max_file_size();
+        std::thread::spawn(move || {
+            let mut monitor = match FileMonitor::new(scan_dir, scan_max) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Failed to create file scanner: {}", e);
+                    return;
+                }
+            };
+            loop {
+                // Process any pending writes first
+                while let Ok((path, data, size)) = write_req_rx.try_recv() {
+                    if let Err(e) = monitor.write_received_file(&path, &data, size) {
+                        eprintln!("Failed to write received file: {}", e);
+                    } else {
+                        println!("Received file \"{}\" ({} bytes)", path, size);
+                    }
+                }
+
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let changes = monitor.scan_changes();
+                if !changes.is_empty() {
+                    if scan_result_tx.send(changes).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        loop {
+            tokio::select! {
+                Some(changes) = scan_result_rx.recv() => {
+                    for content in changes {
+                        log_content("File changed, syncing", &content);
+                        if let Err(e) = outbound_tx.send(content) {
+                            eprintln!("Failed to send file: {}", e);
+                        }
+                    }
+                }
+                Some(message) = inbound_rx.recv() => {
+                    if let Some(ref our_id) = client_id {
+                        if message.client_id.as_ref() == Some(our_id) {
+                            continue;
+                        }
+                    }
+                    if let ClipboardContent::File { ref path, ref data, size } = message.content {
+                        let _ = write_req_tx.send((path.clone(), data.clone(), size));
+                    }
+                }
+            }
+        }
+    })
 }
 
 async fn run_server(
@@ -106,12 +254,22 @@ async fn run_server(
     cert: Option<String>,
     key: Option<String>,
     tls_auto_cert: bool,
+    sync_dir: Option<PathBuf>,
+    max_file_size: u64,
 ) -> Result<()> {
     println!("Starting clipboard sync server...");
     println!("Platform: {}", std::env::consts::OS);
 
     if relay_only {
         println!("Running in relay-only mode (no clipboard access)");
+    }
+
+    if let Some(ref dir) = sync_dir {
+        println!(
+            "File sync enabled: {} (max {} MB)",
+            dir.display(),
+            max_file_size
+        );
     }
 
     // Build TLS acceptor if configured
@@ -139,19 +297,40 @@ async fn run_server(
         }
     });
 
+    // File sync channels
+    let (file_inbound_tx, file_inbound_rx) = mpsc::unbounded_channel::<ClipboardMessage>();
+    let (file_outbound_tx, mut file_outbound_rx) = mpsc::unbounded_channel::<ClipboardContent>();
+    let file_handle = sync_dir.map(|dir| {
+        let max_bytes = max_file_size * 1024 * 1024;
+        let sync_handle =
+            spawn_file_sync_task(dir, max_bytes, file_outbound_tx, file_inbound_rx, None);
+        // Bridge: forward outbound file content to the main broadcast as ClipboardMessages
+        let file_broadcast_tx = broadcast_tx.clone();
+        let bridge_handle = tokio::spawn(async move {
+            while let Some(content) = file_outbound_rx.recv().await {
+                let message = ClipboardMessage {
+                    content,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    client_id: None,
+                };
+                if let Err(e) = file_broadcast_tx.send(message) {
+                    eprintln!("Failed to broadcast file: {}", e);
+                }
+            }
+        });
+        (sync_handle, bridge_handle)
+    });
+
     if relay_only {
         let receive_handle = tokio::spawn(async move {
             while let Some(message) = rx.recv().await {
-                match &message.content {
-                    ClipboardContent::Text(text) => {
-                        println!("Received clipboard content from client: text ({} bytes), relaying to other clients...", text.len());
-                    }
-                    ClipboardContent::Image { width, height, .. } => {
-                        println!("Received clipboard content from client: image ({}x{}), relaying to other clients...", width, height);
-                    }
-                    ClipboardContent::Html { html, .. } => {
-                        println!("Received clipboard content from client: html ({} bytes), relaying to other clients...", html.len());
-                    }
+                log_content("Received from client, relaying", &message.content);
+                // Forward File messages to file sync task
+                if matches!(&message.content, ClipboardContent::File { .. }) {
+                    let _ = file_inbound_tx.send(message.clone());
                 }
                 if let Err(e) = broadcast_tx.send(message) {
                     eprintln!("Failed to broadcast: {}", e);
@@ -159,10 +338,14 @@ async fn run_server(
             }
         });
 
-        tokio::try_join!(server_handle, receive_handle)?;
+        if let Some((sh, bh)) = file_handle {
+            tokio::try_join!(server_handle, receive_handle, sh, bh)?;
+        } else {
+            tokio::try_join!(server_handle, receive_handle)?;
+        }
     } else {
         let clipboard_handle = tokio::spawn(async move {
-            let mut clipboard = match ClipboardMonitor::new() {
+            let mut clipboard = match ClipboardMonitor::new(Some(max_file_size * 1024 * 1024)) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("Failed to create clipboard monitor: {}", e);
@@ -189,17 +372,7 @@ async fn run_server(
                 tokio::select! {
                     Some(_) = local_rx.recv() => {
                         if let Ok(Some(content)) = clipboard.get_clipboard_content() {
-                            match &content {
-                                ClipboardContent::Text(text) => {
-                                    println!("Server clipboard changed: text ({} bytes), broadcasting to clients...", text.len());
-                                }
-                                ClipboardContent::Image { width, height, .. } => {
-                                    println!("Server clipboard changed: image ({}x{}), broadcasting to clients...", width, height);
-                                }
-                                ClipboardContent::Html { html, .. } => {
-                                    println!("Server clipboard changed: html ({} bytes), broadcasting to clients...", html.len());
-                                }
-                            }
+                            log_content("Server clipboard changed, broadcasting", &content);
                             let message = ClipboardMessage {
                                 content,
                                 timestamp: std::time::SystemTime::now()
@@ -214,28 +387,16 @@ async fn run_server(
                         }
                     }
                     Some(message) = rx.recv() => {
+                        log_content("Received from client", &message.content);
                         match &message.content {
-                            ClipboardContent::Text(text) => {
-                                println!(
-                                    "Received clipboard content from client: text ({} bytes)",
-                                    text.len()
-                                );
+                            ClipboardContent::File { .. } => {
+                                let _ = file_inbound_tx.send(message.clone());
                             }
-                            ClipboardContent::Image { width, height, .. } => {
-                                println!(
-                                    "Received clipboard content from client: image ({}x{})",
-                                    width, height
-                                );
+                            _ => {
+                                if let Err(e) = clipboard.set_clipboard_content(&message.content) {
+                                    eprintln!("Failed to set server clipboard: {}", e);
+                                }
                             }
-                            ClipboardContent::Html { html, .. } => {
-                                println!(
-                                    "Received clipboard content from client: html ({} bytes)",
-                                    html.len()
-                                );
-                            }
-                        }
-                        if let Err(e) = clipboard.set_clipboard_content(&message.content) {
-                            eprintln!("Failed to set server clipboard: {}", e);
                         }
                     }
                     else => break,
@@ -245,7 +406,11 @@ async fn run_server(
             monitor_handle.abort();
         });
 
-        tokio::try_join!(server_handle, clipboard_handle)?;
+        if let Some((sh, bh)) = file_handle {
+            tokio::try_join!(server_handle, clipboard_handle, sh, bh)?;
+        } else {
+            tokio::try_join!(server_handle, clipboard_handle)?;
+        }
     }
 
     Ok(())
@@ -258,10 +423,20 @@ async fn run_client(
     tls_enabled: bool,
     ca_cert: Option<String>,
     tls_skip_verify: bool,
+    sync_dir: Option<PathBuf>,
+    max_file_size: u64,
 ) -> Result<()> {
     println!("Starting clipboard sync client...");
     println!("Platform: {}", std::env::consts::OS);
     println!("Connecting to server: {}", server_addr);
+
+    if let Some(ref dir) = sync_dir {
+        println!(
+            "File sync enabled: {} (max {} MB)",
+            dir.display(),
+            max_file_size
+        );
+    }
 
     // Build TLS connector if configured
     let (tls_connector, tls_server_name) = if tls_enabled || ca_cert.is_some() || tls_skip_verify {
@@ -284,9 +459,9 @@ async fn run_client(
     );
     println!("Client ID: {}", client_id);
 
-    // Channel for sending clipboard content to server (broadcast for reconnection support)
+    // Channel for sending content to server (broadcast for reconnection support)
     let (to_server_tx, _) = broadcast::channel::<ClipboardContent>(100);
-    // Channel for receiving clipboard content from server
+    // Channel for receiving content from server
     let (from_server_tx, from_server_rx) = mpsc::unbounded_channel();
 
     let client = SyncClient::new(
@@ -317,10 +492,56 @@ async fn run_client(
         }
     });
 
-    // Unified clipboard management task
-    let client_id_for_clipboard = client_id.clone();
+    // File sync task (independent from clipboard, runs on its own interval)
+    let (file_inbound_tx, file_inbound_rx) = mpsc::unbounded_channel::<ClipboardMessage>();
+    let (file_outbound_tx, mut file_outbound_rx) = mpsc::unbounded_channel::<ClipboardContent>();
+    let file_handle = sync_dir.map(|dir| {
+        let max_bytes = max_file_size * 1024 * 1024;
+        let sync_handle = spawn_file_sync_task(
+            dir,
+            max_bytes,
+            file_outbound_tx,
+            file_inbound_rx,
+            Some(client_id.clone()),
+        );
+        // Bridge: forward outbound file content to the to_server broadcast channel
+        let file_to_server_tx = to_server_tx.clone();
+        let bridge_handle = tokio::spawn(async move {
+            while let Some(content) = file_outbound_rx.recv().await {
+                if let Err(e) = file_to_server_tx.send(content) {
+                    eprintln!("Failed to send file to server: {}", e);
+                }
+            }
+        });
+        (sync_handle, bridge_handle)
+    });
+
+    // Router task: receives all messages from server and dispatches to
+    // clipboard or file sync. Runs on its own lightweight task so it's never
+    // blocked by wl-paste or file I/O.
+    let (clipboard_rx_tx, clipboard_rx_rx) = mpsc::unbounded_channel::<ClipboardMessage>();
+    let client_id_for_router = client_id.clone();
+    let router_handle = tokio::spawn(async move {
+        let mut from_server_rx = from_server_rx;
+        while let Some(message) = from_server_rx.recv().await {
+            // Skip our own messages
+            if message.client_id.as_ref() == Some(&client_id_for_router) {
+                continue;
+            }
+            match &message.content {
+                ClipboardContent::File { .. } => {
+                    let _ = file_inbound_tx.send(message);
+                }
+                _ => {
+                    let _ = clipboard_rx_tx.send(message);
+                }
+            }
+        }
+    });
+
+    // Clipboard management task (may block on wl-paste — isolated from routing)
     let clipboard_handle = tokio::spawn(async move {
-        let mut clipboard = match ClipboardMonitor::new() {
+        let mut clipboard = match ClipboardMonitor::new(Some(max_file_size * 1024 * 1024)) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Failed to create clipboard monitor: {}", e);
@@ -329,9 +550,8 @@ async fn run_client(
         };
 
         let (local_tx, mut local_rx) = mpsc::unbounded_channel();
-        let mut from_server_rx = from_server_rx;
+        let mut clipboard_rx_rx = clipboard_rx_rx;
 
-        // Spawn clipboard monitoring task
         let monitor_handle = {
             let local_tx = local_tx.clone();
             tokio::spawn(async move {
@@ -347,62 +567,16 @@ async fn run_client(
 
         loop {
             tokio::select! {
-                // Check local clipboard changes
                 Some(_) = local_rx.recv() => {
                     if let Ok(Some(content)) = clipboard.get_clipboard_content() {
-                        match &content {
-                            ClipboardContent::Text(text) => {
-                                println!(
-                                    "Local clipboard changed, sending to server: text ({} bytes)",
-                                    text.len()
-                                );
-                            }
-                            ClipboardContent::Image { width, height, .. } => {
-                                println!(
-                                    "Local clipboard changed, sending to server: image ({}x{})",
-                                    width, height
-                                );
-                            }
-                            ClipboardContent::Html { html, .. } => {
-                                println!(
-                                    "Local clipboard changed, sending to server: html ({} bytes)",
-                                    html.len()
-                                );
-                            }
-                        }
+                        log_content("Local clipboard changed, sending to server", &content);
                         if let Err(e) = to_server_tx.send(content) {
                             eprintln!("Failed to send to server: {}", e);
                         }
                     }
                 }
-                // Receive from server
-                Some(message) = from_server_rx.recv() => {
-                    // Skip messages from ourselves
-                    if message.client_id.as_ref() == Some(&client_id_for_clipboard) {
-                        continue;
-                    }
-
-                    match &message.content {
-                        ClipboardContent::Text(text) => {
-                            println!(
-                                "Received clipboard from server: text ({} bytes)",
-                                text.len()
-                            );
-                        }
-                        ClipboardContent::Image { width, height, .. } => {
-                            println!(
-                                "Received clipboard from server: image ({}x{})",
-                                width, height
-                            );
-                        }
-                        ClipboardContent::Html { html, .. } => {
-                            println!(
-                                "Received clipboard from server: html ({} bytes)",
-                                html.len()
-                            );
-                        }
-                    }
-                    // Update clipboard and hash together
+                Some(message) = clipboard_rx_rx.recv() => {
+                    log_content("Received from server", &message.content);
                     if let Err(e) = clipboard.set_clipboard_content(&message.content) {
                         eprintln!("Failed to set clipboard: {}", e);
                     }
@@ -414,7 +588,11 @@ async fn run_client(
         monitor_handle.abort();
     });
 
-    tokio::try_join!(connection_handle, clipboard_handle)?;
+    if let Some((sh, bh)) = file_handle {
+        tokio::try_join!(connection_handle, router_handle, clipboard_handle, sh, bh)?;
+    } else {
+        tokio::try_join!(connection_handle, router_handle, clipboard_handle)?;
+    }
 
     Ok(())
 }

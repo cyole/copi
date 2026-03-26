@@ -29,6 +29,26 @@ pub enum ClipboardContent {
         #[serde(default)]
         text: String,
     },
+    File {
+        // Relative path within the sync directory
+        path: String,
+        // Base64-encoded file content
+        data: String,
+        // Original file size in bytes
+        size: u64,
+    },
+    /// Files copied to clipboard via Ctrl+C in a file manager.
+    /// Synced transparently so Ctrl+V works on the receiving machine.
+    FileCopy {
+        files: Vec<CopiedFile>,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CopiedFile {
+    pub name: String,
+    pub data: String, // base64-encoded
+    pub size: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
