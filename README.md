@@ -302,7 +302,9 @@ Run the server as a Docker container with TLS and token authentication:
 docker build -t copi-server .
 
 # Multi-group mode (recommended) — each token = private clipboard group
-docker run -d -p 9527:9527 copi-server server --relay-only --addr 0.0.0.0:9527 --tls-auto-cert
+docker run -d -p 9527:9527 \
+  -e COPI_SECRET=your-server-secret \
+  copi-server server --relay-only --addr 0.0.0.0:9527 --tls-auto-cert
 
 # Single-group mode — one shared clipboard, server validates token
 docker run -d -p 9527:9527 -e COPI_TOKEN=my-secret-token copi-server
@@ -312,10 +314,10 @@ Then connect clients. Each user picks their own token — users with the same to
 
 ```bash
 # User A's machines (share clipboard with each other)
-copi client --server your-server.example.com --token user-a-secret --tls-skip-verify
+copi client --server your-server.example.com --token user-a-secret --secret your-server-secret --tls-skip-verify
 
 # User B's machines (separate clipboard, same server)
-copi client --server your-server.example.com --token user-b-secret --tls-skip-verify
+copi client --server your-server.example.com --token user-b-secret --secret your-server-secret --tls-skip-verify
 ```
 
 ### Arch Linux (systemd user service)
@@ -340,6 +342,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=COPI_TOKEN=your-secret-token
+Environment=COPI_SECRET=your-server-secret
 ExecStart=%h/.local/bin/copi client --server your-server.example.com --tls-skip-verify
 Restart=always
 RestartSec=5
@@ -365,8 +368,10 @@ journalctl --user -u copi.service -f
 ## Security Considerations
 
 - **Token authentication** uses HMAC-SHA256 challenge-response — the token is never transmitted over the network, preventing eavesdropping and replay attacks
+- **Server secret** (`--secret` / `COPI_SECRET`) — gate authentication, required to connect at all. Prevents unauthorized use of your server. Validated via HMAC (never sent in plaintext).
+- **Rate limiting** — 10 failed authentication attempts per IP per 10 minutes. After that, connections from that IP are dropped immediately.
 - **TLS encryption** protects all traffic (clipboard content, images, auth handshake) from interception
-- For maximum security, use both TLS and token authentication together
+- For maximum security, use TLS + server secret + token together
 - The `--tls-skip-verify` flag disables certificate verification and should only be used with self-signed certs in trusted environments
 - For production deployments, use proper CA-signed certificates with `--cert`/`--key` on the server and `--ca-cert` on clients
 

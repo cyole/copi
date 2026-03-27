@@ -33,6 +33,11 @@ enum Commands {
         #[arg(short, long, env = "COPI_TOKEN")]
         token: Option<String>,
 
+        /// Server secret — clients must provide this to connect at all.
+        /// Can also be set via COPI_SECRET environment variable.
+        #[arg(long, env = "COPI_SECRET")]
+        secret: Option<String>,
+
         /// Path to TLS certificate file (PEM). Enables TLS when provided with --key.
         #[arg(long, env = "COPI_TLS_CERT")]
         cert: Option<String>,
@@ -66,6 +71,11 @@ enum Commands {
         #[arg(short, long, env = "COPI_TOKEN")]
         token: Option<String>,
 
+        /// Server secret for gate authentication.
+        /// Can also be set via COPI_SECRET environment variable.
+        #[arg(long, env = "COPI_SECRET")]
+        secret: Option<String>,
+
         /// Enable TLS connection to server
         #[arg(long)]
         tls: bool,
@@ -97,19 +107,21 @@ async fn main() -> Result<()> {
             addr,
             relay_only,
             token,
+            secret,
             cert,
             key,
             tls_auto_cert,
             sync_dir,
             max_file_size,
         } => {
-            run_server(addr, relay_only, token, cert, key, tls_auto_cert, sync_dir, max_file_size)
+            run_server(addr, relay_only, token, secret, cert, key, tls_auto_cert, sync_dir, max_file_size)
                 .await?;
         }
         Commands::Client {
             server,
             listen,
             token,
+            secret,
             tls,
             ca_cert,
             tls_skip_verify,
@@ -120,6 +132,7 @@ async fn main() -> Result<()> {
                 server,
                 listen,
                 token,
+                secret,
                 tls,
                 ca_cert,
                 tls_skip_verify,
@@ -252,6 +265,7 @@ async fn run_server(
     addr: SocketAddr,
     relay_only: bool,
     token: Option<String>,
+    secret: Option<String>,
     cert: Option<String>,
     key: Option<String>,
     tls_auto_cert: bool,
@@ -290,7 +304,7 @@ async fn run_server(
     let (tx, mut rx) = mpsc::unbounded_channel();
     let (broadcast_tx, _) = broadcast::channel::<ClipboardMessage>(100);
 
-    let server = SyncServer::new(addr, tx.clone(), broadcast_tx.clone(), token, tls_acceptor);
+    let server = SyncServer::new(addr, tx.clone(), broadcast_tx.clone(), token, secret, tls_acceptor);
 
     let server_handle = tokio::spawn(async move {
         if let Err(e) = server.start().await {
@@ -443,6 +457,7 @@ async fn run_client(
     server_str: String,
     _listen_addr: SocketAddr,
     token: Option<String>,
+    secret: Option<String>,
     tls_enabled: bool,
     ca_cert: Option<String>,
     tls_skip_verify: bool,
@@ -493,6 +508,7 @@ async fn run_client(
         server_addr,
         client_id.clone(),
         token,
+        secret,
         tls_connector,
         tls_server_name,
     );
