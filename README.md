@@ -308,7 +308,7 @@ Copi uses a hybrid architecture — clients connect to a central relay server bu
 - Server detects clients with the same public IP (behind same NAT)
 - Sends `PeerDiscovery` with each peer's local LAN IP and listen port
 - Clients connect directly over LAN (TCP on `--listen` port, default 9528)
-- Lower latency, no server bandwidth used, no file size limits
+- Lower latency, no server bandwidth used, 100 MB file limit (vs 10 MB through server)
 
 **LAN discovery fallback (when server is down):**
 - After 2 failed server connection attempts, clients broadcast UDP discovery packets on port 9529
