@@ -4,7 +4,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use modules::clipboard::ClipboardMonitor;
 use modules::files::FileMonitor;
-use modules::sync::{ClipboardContent, ClipboardMessage, SyncClient, SyncServer};
+use modules::discovery;
+use modules::sync::{token_to_group_id, ClipboardContent, ClipboardMessage, SyncClient, SyncServer};
 use modules::tls;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -694,6 +695,9 @@ async fn run_client(
     // Channel for receiving content from server
     let (from_server_tx, from_server_rx) = mpsc::unbounded_channel();
 
+    // Compute token hash for LAN discovery before token is moved
+    let token_for_discovery = token.as_ref().map(|t| token_to_group_id(t));
+
     let client = SyncClient::new(
         server_addr,
         client_id.clone(),
@@ -704,13 +708,22 @@ async fn run_client(
         tls_server_name,
     );
 
+
     // Clone senders for P2P before they're moved into other tasks
     let from_server_tx_for_p2p = from_server_tx.clone();
     let from_server_tx_for_router = from_server_tx.clone();
 
-    // Task to maintain connection with server (bidirectional)
+    // Task to maintain connection — tries server first, falls back to LAN discovery
     let to_server_for_connection = to_server_tx.clone();
+    let from_server_tx_for_discovery = from_server_tx.clone();
+    let to_server_for_discovery = to_server_tx.clone();
+    let token_hash_for_discovery = token_for_discovery.clone();
+    let client_id_for_discovery = client_id.clone();
+    let listen_port_for_discovery = _listen_addr.port();
     let connection_handle = tokio::spawn(async move {
+        let mut discovery_active: Option<tokio::task::JoinHandle<()>> = None;
+        let mut server_retry_count: u32 = 0;
+
         loop {
             let to_server_rx = to_server_for_connection.subscribe();
             match client
@@ -719,12 +732,57 @@ async fn run_client(
             {
                 Ok(_) => {
                     println!("Connection closed, reconnecting...");
+                    server_retry_count = 0;
                 }
                 Err(e) => {
-                    eprintln!("Connection error: {}, retrying in 5s...", e);
+                    server_retry_count += 1;
+                    eprintln!("Connection error: {}, retrying...", e);
+
+                    // After 2 failures, activate LAN discovery as fallback
+                    if server_retry_count >= 2 && discovery_active.is_none() {
+                        if let Some(ref th) = token_hash_for_discovery {
+                            println!("Server unreachable, activating LAN discovery...");
+                            let (peer_tx, mut peer_rx) =
+                                mpsc::unbounded_channel::<discovery::DiscoveredPeer>();
+                            let th = th.clone();
+                            let cid = client_id_for_discovery.clone();
+                            let lp = listen_port_for_discovery;
+
+                            // Start discovery broadcast
+                            let disc_handle = tokio::spawn(async move {
+                                discovery::run_lan_discovery(th, cid, lp, peer_tx).await;
+                            });
+
+                            // Connect to discovered peers
+                            let inbound = from_server_tx_for_discovery.clone();
+                            let outbound = to_server_for_discovery.clone();
+                            let cid2 = client_id_for_discovery.clone();
+                            tokio::spawn(async move {
+                                while let Some(peer) = peer_rx.recv().await {
+                                    let addr = peer.addr.to_string();
+                                    let pid = peer.client_id.clone();
+                                    let inb = inbound.clone();
+                                    let cid = cid2.clone();
+                                    let outb = outbound.subscribe();
+                                    tokio::spawn(async move {
+                                        if let Err(e) =
+                                            run_p2p_client(&addr, &pid, &cid, inb, outb).await
+                                        {
+                                            eprintln!("P2P to {} failed: {}", addr, e);
+                                        }
+                                    });
+                                }
+                            });
+
+                            discovery_active = Some(disc_handle);
+                        }
+                    }
                 }
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            // When in P2P fallback mode, check server less frequently (30s)
+            let wait = if discovery_active.is_some() { 30 } else { 5 };
+            tokio::time::sleep(tokio::time::Duration::from_secs(wait)).await;
         }
     });
 

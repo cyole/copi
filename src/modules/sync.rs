@@ -184,7 +184,7 @@ fn get_local_ip() -> Option<String> {
 }
 
 /// Compute SHA256(token) as hex — used as group identifier.
-fn token_to_group_id(token: &str) -> String {
+pub fn token_to_group_id(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     hex::encode(&hasher.finalize())
