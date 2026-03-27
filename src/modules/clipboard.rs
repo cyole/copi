@@ -410,15 +410,6 @@ impl ClipboardMonitor {
 
             let metadata = std::fs::metadata(path).ok()?;
             let size = metadata.len();
-            if size > self.max_file_size {
-                eprintln!(
-                    "Skipping clipboard file {} ({} bytes, max {} bytes)",
-                    path.display(),
-                    size,
-                    self.max_file_size
-                );
-                continue;
-            }
 
             let data = std::fs::read(path).ok()?;
             let name = path
@@ -772,13 +763,6 @@ return output
             }
             let metadata = std::fs::metadata(p).ok()?;
             let size = metadata.len();
-            if size > self.max_file_size {
-                eprintln!(
-                    "Skipping clipboard file {} ({} bytes, max {} bytes)",
-                    path, size, self.max_file_size
-                );
-                continue;
-            }
             let data = std::fs::read(p).ok()?;
             let name = p
                 .file_name()
@@ -886,10 +870,6 @@ return output
 
             let metadata = std::fs::metadata(p).ok()?;
             let size = metadata.len();
-            if size > self.max_file_size {
-                eprintln!("Skipping clipboard file {} ({} bytes, max {})", p.display(), size, self.max_file_size);
-                continue;
-            }
 
             let data = std::fs::read(p).ok()?;
             let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
