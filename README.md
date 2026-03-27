@@ -283,20 +283,18 @@ The `--max-file-size` flag controls the maximum size for clipboard file transfer
 Copi uses a hybrid architecture — clients connect to a central relay server but automatically establish direct P2P connections when possible:
 
 ```
-┌──────────────────────────────────────────────┐
-│                 Internet Server               │
-│            (relay, multi-group, TLS)          │
-└──────────┬───────────────────┬───────────────┘
-           │                   │
-     ┌─────┴─────┐       ┌────┴────┐
-     │ Client A  │◄─P2P─►│Client B │   (same LAN)
-     │  Linux    │  direct│  macOS  │
-     └───────────┘       └─────────┘
-                               │
-                         ┌─────┴─────┐
-                         │ Client C  │   (remote)
-                         │  laptop   │
-                         └───────────┘
+              ┌──────────────────────────┐
+              │     Internet Server      │
+              │  (relay, multi-group)    │
+              └───┬─────────┬────────┬──┘
+                  │         │        │
+            ┌─────┴───┐ ┌──┴─────┐ ┌┴──────────┐
+            │Client A │ │Client B│ │ Client C   │
+            │ Linux   │ │ macOS  │ │  laptop    │
+            └────┬────┘ └───┬────┘ │  (remote)  │
+                 │          │      └────────────┘
+                 └──P2P ────┘
+                  (same LAN)
 ```
 
 **Server mode (always active):**
