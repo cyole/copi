@@ -20,6 +20,8 @@ A cross-platform clipboard synchronization tool for Linux and macOS, written in 
 - 🎯 Full Wayland support (using wl-clipboard)
 - 🔑 Token-based authentication (HMAC-SHA256 challenge-response, token never sent over the wire)
 - 👥 Multi-user support — each token = separate private clipboard group on the same server
+- 🛡️ Server secret gate — prevents unauthorized access to internet-facing servers
+- 🚫 Rate limiting — 10 failed auth attempts per IP per 10 minutes, then auto-blocked
 - 🔐 TLS encryption (auto-generated self-signed certs or bring your own)
 - 🐳 Docker support for headless relay servers
 
@@ -158,6 +160,27 @@ copi server --relay-only --tls-auto-cert
 ```
 Any client can connect with any token. Clients with the **same token** share a clipboard group; different tokens are isolated. One server, unlimited private clipboard groups. The token acts as a room key — only people who know it can join that group.
 
+**Server Secret (gate authentication):**
+
+For internet-facing servers, set a server secret to prevent unauthorized access. Only clients with the matching secret can connect:
+
+```bash
+# Server
+copi server --relay-only --secret my-server-secret --tls-auto-cert
+
+# Or via environment variable
+export COPI_SECRET=my-server-secret
+copi server --relay-only --tls-auto-cert
+```
+
+Clients must provide the same secret:
+
+```bash
+copi client --server your-server.example.com --token my-token --secret my-server-secret --tls-skip-verify
+```
+
+The secret is validated via HMAC challenge-response (never sent in plaintext). Failed attempts are rate-limited: after 10 failures from the same IP within 10 minutes, all connections from that IP are dropped immediately.
+
 **TLS Encryption:**
 
 Enable TLS to encrypt all traffic (clipboard data, images, auth handshake):
@@ -207,8 +230,8 @@ copi client --server 192.168.1.100:9527 --ca-cert /path/to/ca.pem
 # Skip certificate verification (for self-signed certs)
 copi client --server 192.168.1.100:9527 --tls-skip-verify
 
-# Full setup: TLS + token
-copi client --server 192.168.1.100:9527 --token my-secret-token --tls-skip-verify
+# Full setup: TLS + token + server secret
+copi client --server 192.168.1.100:9527 --token my-secret-token --secret my-server-secret --tls-skip-verify
 ```
 
 The client automatically monitors local clipboard changes (including text and images) and syncs with the server.
@@ -318,6 +341,26 @@ copi client --server your-server.example.com --token user-a-secret --secret your
 
 # User B's machines (separate clipboard, same server)
 copi client --server your-server.example.com --token user-b-secret --secret your-server-secret --tls-skip-verify
+```
+
+**Complete production example (multi-group + secret + TLS):**
+
+```bash
+# Generate secrets
+SERVER_SECRET=$(openssl rand -hex 24)
+echo "Server secret: $SERVER_SECRET"
+
+# Start server
+docker run -d --name copi-server --restart unless-stopped \
+  -p 9527:9527 \
+  -e COPI_SECRET=$SERVER_SECRET \
+  copi-server server --relay-only --addr 0.0.0.0:9527 --tls-auto-cert
+
+# Connect clients (each user picks their own token for their private clipboard)
+copi client --server your-server.example.com \
+  --token my-clipboard-key \
+  --secret $SERVER_SECRET \
+  --tls-skip-verify
 ```
 
 ### Arch Linux (systemd user service)
