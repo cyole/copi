@@ -313,8 +313,12 @@ The `--max-file-size` flag controls the maximum size for clipboard file transfer
 
 - ✅ Plain text clipboard
 - ✅ Images (PNG, JPEG, and other formats, internally converted to PNG)
-- ✅ Native file copy/paste (Ctrl+C / Cmd+C → Ctrl+V / Cmd+V across machines, Linux Wayland + macOS)
+- ✅ Single file copy/paste (Ctrl+C / Cmd+C → Ctrl+V / Cmd+V across machines)
+- ✅ Multi-file copy/paste (select multiple files, Ctrl+C → Ctrl+V)
+- ✅ Folder copy/paste (Ctrl+C a folder → entire directory tree synced with structure preserved)
 - ✅ Directory sync via `--sync-dir` (any file type, configurable size limit)
+
+**macOS limitation:** When pasting multiple files or folders received from Linux, macOS places them in a temporary folder (`copi-clipboard-files`) rather than directly into the current directory. This is due to macOS clipboard API limitations with multi-file paste. Single file paste works directly.
 
 ## How It Works
 
