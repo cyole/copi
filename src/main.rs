@@ -171,6 +171,10 @@ fn log_content(prefix: &str, content: &ClipboardContent) {
                 total
             );
         }
+        ClipboardContent::PeerDiscovery { peers } => {
+            let ids: Vec<&str> = peers.iter().map(|p| p.local_ip.as_str()).collect();
+            println!("{}: P2P peers discovered [{}]", prefix, ids.join(", "));
+        }
     }
 }
 
@@ -257,6 +261,192 @@ fn spawn_file_sync_task(
                     }
                 }
             }
+        }
+    })
+}
+
+/// P2P: connect to a peer on LAN and relay clipboard messages directly.
+async fn run_p2p_client(
+    addr: &str,
+    _peer_id: &str,
+    our_client_id: &str,
+    inbound_tx: mpsc::UnboundedSender<ClipboardMessage>,
+    mut outbound_rx: broadcast::Receiver<ClipboardContent>,
+) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    let stream = TcpStream::connect(addr).await?;
+    println!("P2P: connected to peer at {}", addr);
+
+    let (mut reader, mut writer) = stream.into_split();
+    let client_id = our_client_id.to_string();
+
+    // Receive from peer
+    let recv_handle = tokio::spawn(async move {
+        loop {
+            // Read 4-byte length prefix
+            let mut len_bytes = [0u8; 4];
+            if reader.read_exact(&mut len_bytes).await.is_err() {
+                break;
+            }
+            let len = u32::from_be_bytes(len_bytes) as usize;
+            if len == 0 || len > 100_000_000 {
+                // P2P: 100MB limit (no server bandwidth concerns)
+                break;
+            }
+            let mut buf = vec![0u8; len];
+            if reader.read_exact(&mut buf).await.is_err() {
+                break;
+            }
+            if let Ok(msg) = serde_json::from_slice::<ClipboardMessage>(&buf) {
+                if let Err(_) = inbound_tx.send(msg) {
+                    break;
+                }
+            }
+        }
+    });
+
+    // Send to peer
+    let send_handle = tokio::spawn(async move {
+        loop {
+            match outbound_rx.recv().await {
+                Ok(content) => {
+                    // Skip PeerDiscovery control messages
+                    if matches!(&content, ClipboardContent::PeerDiscovery { .. }) {
+                        continue;
+                    }
+                    let message = ClipboardMessage {
+                        content,
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                        client_id: Some(client_id.clone()),
+                    };
+                    if let Ok(data) = serde_json::to_vec(&message) {
+                        let len = data.len() as u32;
+                        if writer.write_all(&len.to_be_bytes()).await.is_err() {
+                            break;
+                        }
+                        if writer.write_all(&data).await.is_err() {
+                            break;
+                        }
+                        let _ = writer.flush().await;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+    });
+
+    tokio::select! {
+        _ = recv_handle => {},
+        _ = send_handle => {},
+    }
+    println!("P2P: disconnected from {}", addr);
+    Ok(())
+}
+
+/// P2P: listen for incoming peer connections on LAN.
+fn spawn_p2p_listener(
+    listen_addr: SocketAddr,
+    inbound_tx: mpsc::UnboundedSender<ClipboardMessage>,
+    outbound_tx: broadcast::Sender<ClipboardContent>,
+    our_client_id: String,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        use tokio::net::TcpListener;
+
+        let listener = match TcpListener::bind(listen_addr).await {
+            Ok(l) => {
+                println!("P2P: listening on {}", listen_addr);
+                l
+            }
+            Err(e) => {
+                eprintln!("P2P: failed to bind {}: {}", listen_addr, e);
+                return;
+            }
+        };
+
+        loop {
+            let (stream, addr) = match listener.accept().await {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            println!("P2P: accepted connection from {}", addr);
+
+            let inbound = inbound_tx.clone();
+            let outbound = outbound_tx.subscribe();
+            let client_id = our_client_id.clone();
+
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+                let (mut reader, mut writer) = stream.into_split();
+
+                let recv_handle = tokio::spawn(async move {
+                    loop {
+                        let mut len_bytes = [0u8; 4];
+                        if reader.read_exact(&mut len_bytes).await.is_err() {
+                            break;
+                        }
+                        let len = u32::from_be_bytes(len_bytes) as usize;
+                        if len == 0 || len > 100_000_000 {
+                            break;
+                        }
+                        let mut buf = vec![0u8; len];
+                        if reader.read_exact(&mut buf).await.is_err() {
+                            break;
+                        }
+                        if let Ok(msg) = serde_json::from_slice::<ClipboardMessage>(&buf) {
+                            if inbound.send(msg).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                });
+
+                let mut outbound = outbound;
+                let send_handle = tokio::spawn(async move {
+                    loop {
+                        match outbound.recv().await {
+                            Ok(content) => {
+                                if matches!(&content, ClipboardContent::PeerDiscovery { .. }) {
+                                    continue;
+                                }
+                                let message = ClipboardMessage {
+                                    content,
+                                    timestamp: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_secs(),
+                                    client_id: Some(client_id.clone()),
+                                };
+                                if let Ok(data) = serde_json::to_vec(&message) {
+                                    let len = data.len() as u32;
+                                    if writer.write_all(&len.to_be_bytes()).await.is_err() {
+                                        break;
+                                    }
+                                    if writer.write_all(&data).await.is_err() {
+                                        break;
+                                    }
+                                    let _ = writer.flush().await;
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(_) => break,
+                        }
+                    }
+                });
+
+                tokio::select! {
+                    _ = recv_handle => {},
+                    _ = send_handle => {},
+                }
+                println!("P2P: peer {} disconnected", addr);
+            });
         }
     })
 }
@@ -509,9 +699,14 @@ async fn run_client(
         client_id.clone(),
         token,
         secret,
+        _listen_addr.port(),
         tls_connector,
         tls_server_name,
     );
+
+    // Clone senders for P2P before they're moved into other tasks
+    let from_server_tx_for_p2p = from_server_tx.clone();
+    let from_server_tx_for_router = from_server_tx.clone();
 
     // Task to maintain connection with server (bidirectional)
     let to_server_for_connection = to_server_tx.clone();
@@ -532,6 +727,14 @@ async fn run_client(
             tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
     });
+
+    // P2P listener — accepts direct connections from LAN peers
+    let p2p_listener_handle = spawn_p2p_listener(
+        _listen_addr,
+        from_server_tx_for_p2p,
+        to_server_tx.clone(),
+        client_id.clone(),
+    );
 
     // File sync task (independent from clipboard, runs on its own interval)
     let (file_inbound_tx, file_inbound_rx) = mpsc::unbounded_channel::<ClipboardMessage>();
@@ -562,6 +765,8 @@ async fn run_client(
     // blocked by wl-paste or file I/O.
     let (clipboard_rx_tx, clipboard_rx_rx) = mpsc::unbounded_channel::<ClipboardMessage>();
     let client_id_for_router = client_id.clone();
+    let to_server_for_p2p = to_server_tx.clone();
+    let _listen_port = _listen_addr.port();
     let router_handle = tokio::spawn(async move {
         let mut from_server_rx = from_server_rx;
         while let Some(message) = from_server_rx.recv().await {
@@ -570,7 +775,31 @@ async fn run_client(
                 continue;
             }
             match &message.content {
-                ClipboardContent::File { .. } => {
+                ClipboardContent::PeerDiscovery { peers } => {
+                    // Start P2P connections to discovered LAN peers
+                    for peer in peers {
+                        println!(
+                            "P2P: discovered peer {} at {}:{}",
+                            &peer.client_id[..8.min(peer.client_id.len())],
+                            peer.local_ip,
+                            peer.listen_port
+                        );
+                        let peer_addr = format!("{}:{}", peer.local_ip, peer.listen_port);
+                        let peer_id = peer.client_id.clone();
+                        // P2P inbound messages go to the same from_server channel
+                        let p2p_inbound = from_server_tx_for_router.clone();
+                        let client_id = client_id_for_router.clone();
+                        let p2p_outbound = to_server_for_p2p.subscribe();
+                        tokio::spawn(async move {
+                            if let Err(e) =
+                                run_p2p_client(&peer_addr, &peer_id, &client_id, p2p_inbound, p2p_outbound).await
+                            {
+                                eprintln!("P2P connection to {} failed: {}", peer_addr, e);
+                            }
+                        });
+                    }
+                }
+                ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } => {
                     let _ = file_inbound_tx.send(message);
                 }
                 _ => {
@@ -630,9 +859,9 @@ async fn run_client(
     });
 
     if let Some((sh, bh)) = file_handle {
-        tokio::try_join!(connection_handle, router_handle, clipboard_handle, sh, bh)?;
+        tokio::try_join!(connection_handle, router_handle, clipboard_handle, p2p_listener_handle, sh, bh)?;
     } else {
-        tokio::try_join!(connection_handle, router_handle, clipboard_handle)?;
+        tokio::try_join!(connection_handle, router_handle, clipboard_handle, p2p_listener_handle)?;
     }
 
     Ok(())

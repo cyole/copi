@@ -55,6 +55,10 @@ pub enum ClipboardContent {
     FileCopy {
         files: Vec<CopiedFile>,
     },
+    /// Control message: server notifies clients of same-LAN peers for P2P.
+    PeerDiscovery {
+        peers: Vec<PeerEntry>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -85,6 +89,12 @@ pub struct AuthRequest {
     pub token_hash: String, // hex-encoded SHA256(token) — used as group ID
     #[serde(default)]
     pub secret_hmac: String, // hex-encoded HMAC-SHA256(secret, nonce) — server gate auth
+    #[serde(default)]
+    pub listen_port: u16,   // P2P listen port
+    #[serde(default)]
+    pub local_ip: String,   // Client's LAN IP (e.g. 192.168.1.x)
+    #[serde(default)]
+    pub client_id: String,  // Unique client identifier
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -92,6 +102,14 @@ pub struct AuthResponse {
     pub success: bool,
     pub message: String,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PeerEntry {
+    pub client_id: String,
+    pub local_ip: String,
+    pub listen_port: u16,
+}
+
 
 // Helper functions for length-prefixed message protocol (generic over any async reader/writer)
 async fn read_message<T: for<'de> Deserialize<'de>, R: AsyncReadExt + Unpin>(
@@ -155,6 +173,16 @@ fn compute_hmac(token: &str, nonce_bytes: &[u8]) -> String {
     hex::encode(&mac.finalize().into_bytes())
 }
 
+/// Get the local LAN IP address.
+fn get_local_ip() -> Option<String> {
+    use std::net::UdpSocket;
+    // Connect to a remote address (doesn't actually send anything) to determine local IP
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let local_addr = socket.local_addr().ok()?;
+    Some(local_addr.ip().to_string())
+}
+
 /// Compute SHA256(token) as hex — used as group identifier.
 fn token_to_group_id(token: &str) -> String {
     let mut hasher = Sha256::new();
@@ -179,15 +207,22 @@ mod hex {
     }
 }
 
-/// Run authentication on the server side. Returns the group ID.
-/// Validates server secret first (if set), then token/group assignment.
+/// Auth result with group ID and client's P2P info.
+struct AuthResult {
+    group_id: String,
+    client_id: String,
+    local_ip: String,
+    listen_port: u16,
+}
+
+/// Run authentication on the server side.
 async fn server_auth_handshake(
     reader: &mut DynRead,
     writer: &mut DynWrite,
     expected_token: Option<&str>,
     expected_secret: Option<&str>,
     multi_group: bool,
-) -> Result<String> {
+) -> Result<AuthResult> {
     // Generate random nonce
     let nonce_bytes: [u8; 32] = rand::thread_rng().gen();
     let nonce_hex = hex::encode(&nonce_bytes);
@@ -276,7 +311,16 @@ async fn server_auth_handshake(
     let short_id = if group_id.len() >= 8 { &group_id[..8] } else { &group_id };
     println!("Client authenticated (group {}...)", short_id);
 
-    Ok(group_id)
+    Ok(AuthResult {
+        group_id,
+        client_id: if auth_req.client_id.is_empty() {
+            format!("{}:{}", auth_req.token_hash.get(..8).unwrap_or("unknown"), auth_req.listen_port)
+        } else {
+            auth_req.client_id.clone()
+        },
+        local_ip: auth_req.local_ip,
+        listen_port: auth_req.listen_port,
+    })
 }
 
 /// Run authentication on the client side.
@@ -285,6 +329,8 @@ async fn client_auth_handshake(
     writer: &mut DynWrite,
     token: &str,
     secret: Option<&str>,
+    listen_port: u16,
+    client_id: &str,
 ) -> Result<()> {
     // Read challenge from server
     let challenge: AuthChallenge = read_message(reader)
@@ -294,13 +340,16 @@ async fn client_auth_handshake(
     let nonce_bytes =
         hex::decode(&challenge.nonce).map_err(|e| anyhow::anyhow!("Invalid nonce hex: {}", e))?;
 
-    // Compute HMACs and send
+    // Compute HMACs and send with P2P info
     let auth_req = AuthRequest {
         hmac: compute_hmac(token, &nonce_bytes),
         token_hash: token_to_group_id(token),
         secret_hmac: secret
             .map(|s| compute_hmac(s, &nonce_bytes))
             .unwrap_or_default(),
+        listen_port,
+        local_ip: get_local_ip().unwrap_or_default(),
+        client_id: client_id.to_string(),
     };
     write_message(writer, &auth_req)
         .await
@@ -321,6 +370,18 @@ async fn client_auth_handshake(
 
 /// Thread-safe map of group_id -> broadcast channel.
 type GroupMap = Arc<RwLock<HashMap<String, broadcast::Sender<ClipboardMessage>>>>;
+
+/// Connected peer info for P2P discovery.
+#[derive(Clone, Debug)]
+struct ConnectedPeer {
+    client_id: String,
+    public_ip: IpAddr,
+    local_ip: String,
+    listen_port: u16,
+}
+
+/// Map of group_id -> list of connected peers.
+type PeerMap = Arc<RwLock<HashMap<String, Vec<ConnectedPeer>>>>;
 
 /// Rate limiter: tracks failed auth attempts per IP.
 const MAX_FAILURES: u32 = 10;
@@ -374,6 +435,7 @@ pub struct SyncServer {
     secret: Option<String>,
     tls_acceptor: Option<TlsAcceptor>,
     groups: GroupMap,
+    peers: PeerMap,
     rate_limiter: RateLimiter,
 }
 
@@ -394,6 +456,7 @@ impl SyncServer {
             secret,
             tls_acceptor,
             groups: Arc::new(RwLock::new(HashMap::new())),
+            peers: Arc::new(RwLock::new(HashMap::new())),
             rate_limiter: RateLimiter::new(),
         }
     }
@@ -457,6 +520,7 @@ impl SyncServer {
             let secret = self.secret.clone();
             let tls_acceptor = self.tls_acceptor.clone();
             let groups = self.groups.clone();
+            let peers = self.peers.clone();
             let rate_limiter = self.rate_limiter.clone();
             let multi_group = multi_group;
             tokio::spawn(async move {
@@ -468,6 +532,7 @@ impl SyncServer {
                     secret,
                     tls_acceptor,
                     groups,
+                    peers,
                     multi_group,
                     client_ip,
                     rate_limiter.clone(),
@@ -488,6 +553,7 @@ impl SyncServer {
         secret: Option<String>,
         tls_acceptor: Option<TlsAcceptor>,
         groups: GroupMap,
+        peers: PeerMap,
         multi_group: bool,
         client_ip: IpAddr,
         rate_limiter: RateLimiter,
@@ -517,16 +583,86 @@ impl SyncServer {
         )
         .await;
 
-        let group_id = match auth_result {
-            Ok(gid) => {
+        let auth = match auth_result {
+            Ok(a) => {
                 rate_limiter.clear(client_ip).await;
-                gid
+                a
             }
             Err(e) => {
                 rate_limiter.record_failure(client_ip).await;
                 return Err(e);
             }
         };
+
+        let group_id = auth.group_id.clone();
+        let client_id = auth.client_id.clone();
+
+        // Register peer and check for same-IP peers (P2P discovery)
+        if auth.listen_port > 0 && !auth.local_ip.is_empty() {
+            let new_peer = ConnectedPeer {
+                client_id: client_id.clone(),
+                public_ip: client_ip,
+                local_ip: auth.local_ip.clone(),
+                listen_port: auth.listen_port,
+            };
+
+            let mut peer_map = peers.write().await;
+            let group_peers = peer_map.entry(group_id.clone()).or_default();
+
+            // Find same-IP peers for P2P
+            let same_ip_peers: Vec<PeerEntry> = group_peers
+                .iter()
+                .filter(|p| p.public_ip == client_ip && p.client_id != client_id)
+                .map(|p| PeerEntry {
+                    client_id: p.client_id.clone(),
+                    local_ip: p.local_ip.clone(),
+                    listen_port: p.listen_port,
+                })
+                .collect();
+
+            group_peers.push(new_peer.clone());
+            drop(peer_map);
+
+            if !same_ip_peers.is_empty() {
+                println!(
+                    "P2P: detected {} same-IP peer(s) for client, sending PeerDiscovery",
+                    same_ip_peers.len()
+                );
+                // Send PeerDiscovery to the new client
+                let discovery_msg = ClipboardMessage {
+                    content: ClipboardContent::PeerDiscovery {
+                        peers: same_ip_peers,
+                    },
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    client_id: None,
+                };
+                let _ = write_message(&mut writer, &discovery_msg).await;
+
+                // Also notify existing peers about the new client
+                let new_peer_entry = PeerEntry {
+                    client_id: client_id.clone(),
+                    local_ip: auth.local_ip,
+                    listen_port: auth.listen_port,
+                };
+                let notify_msg = ClipboardMessage {
+                    content: ClipboardContent::PeerDiscovery {
+                        peers: vec![new_peer_entry],
+                    },
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    client_id: None,
+                };
+                // Send via group broadcast so existing clients get it
+                if let Some(group_tx) = groups.read().await.get(&group_id) {
+                    let _ = group_tx.send(notify_msg);
+                }
+            }
+        }
 
         // Get the group's broadcast channel
         let group_broadcast_tx = if multi_group {
@@ -595,6 +731,14 @@ impl SyncServer {
             _ = broadcast_handle => {},
         }
 
+        // Cleanup: remove peer from map on disconnect
+        {
+            let mut peer_map = peers.write().await;
+            if let Some(group_peers) = peer_map.get_mut(&group_id) {
+                group_peers.retain(|p| p.client_id != client_id);
+            }
+        }
+
         Ok(())
     }
 }
@@ -605,6 +749,7 @@ pub struct SyncClient {
     client_id: String,
     token: Option<String>,
     secret: Option<String>,
+    listen_port: u16,
     tls_connector: Option<tokio_rustls::TlsConnector>,
     tls_server_name: Option<rustls::pki_types::ServerName<'static>>,
 }
@@ -615,6 +760,7 @@ impl SyncClient {
         client_id: String,
         token: Option<String>,
         secret: Option<String>,
+        listen_port: u16,
         tls_connector: Option<tokio_rustls::TlsConnector>,
         tls_server_name: Option<rustls::pki_types::ServerName<'static>>,
     ) -> Self {
@@ -623,6 +769,7 @@ impl SyncClient {
             client_id,
             token,
             secret,
+            listen_port,
             tls_connector,
             tls_server_name,
         }
@@ -655,7 +802,7 @@ impl SyncClient {
 
         // Authentication handshake (runs inside TLS tunnel if enabled)
         if let Some(ref token) = self.token {
-            client_auth_handshake(&mut reader, &mut writer, token, self.secret.as_deref()).await?;
+            client_auth_handshake(&mut reader, &mut writer, token, self.secret.as_deref(), self.listen_port, &self.client_id).await?;
         }
 
         // Task to receive messages from server

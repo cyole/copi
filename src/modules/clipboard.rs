@@ -138,6 +138,10 @@ impl ClipboardMonitor {
                     hasher.update(&f.size.to_le_bytes());
                 }
             }
+            ClipboardContent::PeerDiscovery { .. } => {
+                // Control message, not clipboard content
+                return "peer_discovery".to_string();
+            }
         }
         format!("{:x}", hasher.finalize())
     }
@@ -607,7 +611,7 @@ impl ClipboardMonitor {
                             anyhow::anyhow!("Failed to set clipboard HTML as text: {}", e)
                         })?;
                     }
-                    ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } => {
+                    ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } | ClipboardContent::PeerDiscovery { .. } => {
                         return Ok(());
                     }
                 }
@@ -620,7 +624,7 @@ impl ClipboardMonitor {
                     ClipboardContent::Text(text) => Self::wl_copy_text(text)?,
                     ClipboardContent::Image { data, .. } => Self::wl_copy_image(data)?,
                     ClipboardContent::Html { html, text: _ } => Self::wl_copy_html(html)?,
-                    ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } => {
+                    ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } | ClipboardContent::PeerDiscovery { .. } => {
                         return Ok(());
                     }
                 };
