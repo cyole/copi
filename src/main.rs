@@ -266,11 +266,76 @@ fn spawn_file_sync_task(
     })
 }
 
-/// P2P: connect to a peer on LAN and relay clipboard messages directly (TLS encrypted).
+/// P2P mutual authentication: both sides prove they know the token.
+/// Initiator sends nonce, responder sends HMAC + their nonce, initiator sends HMAC.
+async fn p2p_auth<R: tokio::io::AsyncReadExt + Unpin, W: tokio::io::AsyncWriteExt + Unpin>(
+    reader: &mut R,
+    writer: &mut W,
+    token: &str,
+    is_initiator: bool,
+) -> Result<()> {
+    use hmac::{Hmac, Mac};
+    use rand::Rng;
+    use sha2::Sha256;
+    type HmacSha256 = Hmac<Sha256>;
+
+    if is_initiator {
+        // Step 1: Send our nonce
+        let nonce: [u8; 32] = rand::thread_rng().gen();
+        writer.write_all(&nonce).await?;
+        writer.flush().await?;
+
+        // Step 2: Read peer's HMAC of our nonce + peer's nonce
+        let mut peer_hmac = [0u8; 32];
+        reader.read_exact(&mut peer_hmac).await?;
+        let mut peer_nonce = [0u8; 32];
+        reader.read_exact(&mut peer_nonce).await?;
+
+        // Verify peer's HMAC
+        let mut mac = HmacSha256::new_from_slice(token.as_bytes())?;
+        mac.update(&nonce);
+        if mac.verify_slice(&peer_hmac).is_err() {
+            anyhow::bail!("P2P auth failed: peer does not know the token");
+        }
+
+        // Step 3: Send our HMAC of peer's nonce
+        let mut mac = HmacSha256::new_from_slice(token.as_bytes())?;
+        mac.update(&peer_nonce);
+        writer.write_all(&mac.finalize().into_bytes()).await?;
+        writer.flush().await?;
+    } else {
+        // Step 1: Read initiator's nonce
+        let mut peer_nonce = [0u8; 32];
+        reader.read_exact(&mut peer_nonce).await?;
+
+        // Step 2: Send HMAC of their nonce + our nonce
+        let our_nonce: [u8; 32] = rand::thread_rng().gen();
+        let mut mac = HmacSha256::new_from_slice(token.as_bytes())?;
+        mac.update(&peer_nonce);
+        writer.write_all(&mac.finalize().into_bytes()).await?;
+        writer.write_all(&our_nonce).await?;
+        writer.flush().await?;
+
+        // Step 3: Read initiator's HMAC of our nonce
+        let mut peer_hmac = [0u8; 32];
+        reader.read_exact(&mut peer_hmac).await?;
+
+        let mut mac = HmacSha256::new_from_slice(token.as_bytes())?;
+        mac.update(&our_nonce);
+        if mac.verify_slice(&peer_hmac).is_err() {
+            anyhow::bail!("P2P auth failed: peer does not know the token");
+        }
+    }
+
+    Ok(())
+}
+
+/// P2P: connect to a peer on LAN and relay clipboard messages directly (TLS + auth).
 async fn run_p2p_client(
     addr: &str,
     _peer_id: &str,
     our_client_id: &str,
+    token: &str,
     inbound_tx: mpsc::UnboundedSender<ClipboardMessage>,
     mut outbound_rx: broadcast::Receiver<ClipboardContent>,
 ) -> Result<()> {
@@ -283,11 +348,15 @@ async fn run_p2p_client(
     let connector = tls::build_client_tls(None, true)?;
     let server_name = tls::parse_server_name(addr)?;
     let tls_stream = connector.connect(server_name, stream).await?;
-    println!("P2P: connected to peer at {} (TLS)", addr);
 
     let (reader, writer) = tokio::io::split(tls_stream);
     let mut reader = reader;
     let mut writer = writer;
+
+    // Mutual auth: prove both sides know the token
+    p2p_auth(&mut reader, &mut writer, token, true).await?;
+    println!("P2P: connected to peer at {} (TLS + auth)", addr);
+
     let client_id = our_client_id.to_string();
 
     // Receive from peer
@@ -357,12 +426,13 @@ async fn run_p2p_client(
     Ok(())
 }
 
-/// P2P: listen for incoming peer connections on LAN (TLS encrypted).
+/// P2P: listen for incoming peer connections on LAN (TLS + auth).
 fn spawn_p2p_listener(
     listen_addr: SocketAddr,
     inbound_tx: mpsc::UnboundedSender<ClipboardMessage>,
     outbound_tx: broadcast::Sender<ClipboardContent>,
     our_client_id: String,
+    token: String,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         use tokio::net::TcpListener;
@@ -409,6 +479,7 @@ fn spawn_p2p_listener(
             let inbound = inbound_tx.clone();
             let outbound = outbound_tx.subscribe();
             let client_id = our_client_id.clone();
+            let peer_token = token.clone();
 
             tokio::spawn(async move {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -416,6 +487,13 @@ fn spawn_p2p_listener(
                 let (reader, writer) = tokio::io::split(tls_stream);
                 let mut reader = reader;
                 let mut writer = writer;
+
+                // Mutual auth: verify peer knows the token
+                if let Err(e) = p2p_auth(&mut reader, &mut writer, &peer_token, false).await {
+                    eprintln!("P2P: auth failed from {}: {}", addr, e);
+                    return;
+                }
+                println!("P2P: peer {} authenticated (TLS + auth)", addr);
 
                 let recv_handle = tokio::spawn(async move {
                     loop {
@@ -727,6 +805,7 @@ async fn run_client(
 
     // Compute token hash for LAN discovery before token is moved
     let token_for_discovery = token.as_ref().map(|t| token_to_group_id(t));
+    let raw_token_for_p2p = token.clone().unwrap_or_default();
 
     let client = SyncClient::new(
         server_addr,
@@ -749,6 +828,7 @@ async fn run_client(
     let to_server_for_discovery = to_server_tx.clone();
     let token_hash_for_discovery = token_for_discovery.clone();
     let client_id_for_discovery = client_id.clone();
+    let token_for_p2p_discovery = raw_token_for_p2p.clone();
     let listen_port_for_discovery = _listen_addr.port();
     let connection_handle = tokio::spawn(async move {
         let mut discovery_active: Option<tokio::task::JoinHandle<()>> = None;
@@ -787,6 +867,7 @@ async fn run_client(
                             let inbound = from_server_tx_for_discovery.clone();
                             let outbound = to_server_for_discovery.clone();
                             let cid2 = client_id_for_discovery.clone();
+                            let tok_for_peers = token_for_p2p_discovery.clone();
                             tokio::spawn(async move {
                                 while let Some(peer) = peer_rx.recv().await {
                                     let addr = peer.addr.to_string();
@@ -794,9 +875,10 @@ async fn run_client(
                                     let inb = inbound.clone();
                                     let cid = cid2.clone();
                                     let outb = outbound.subscribe();
+                                    let tok = tok_for_peers.clone();
                                     tokio::spawn(async move {
                                         if let Err(e) =
-                                            run_p2p_client(&addr, &pid, &cid, inb, outb).await
+                                            run_p2p_client(&addr, &pid, &cid, &tok, inb, outb).await
                                         {
                                             eprintln!("P2P to {} failed: {}", addr, e);
                                         }
@@ -822,6 +904,7 @@ async fn run_client(
         from_server_tx_for_p2p,
         to_server_tx.clone(),
         client_id.clone(),
+        raw_token_for_p2p.clone(),
     );
 
     // File sync task (independent from clipboard, runs on its own interval)
@@ -854,6 +937,7 @@ async fn run_client(
     let (clipboard_rx_tx, clipboard_rx_rx) = mpsc::unbounded_channel::<ClipboardMessage>();
     let client_id_for_router = client_id.clone();
     let to_server_for_p2p = to_server_tx.clone();
+    let p2p_token = raw_token_for_p2p.clone();
     let _listen_port = _listen_addr.port();
     let router_handle = tokio::spawn(async move {
         let mut from_server_rx = from_server_rx;
@@ -896,9 +980,10 @@ async fn run_client(
                         let p2p_inbound = from_server_tx_for_router.clone();
                         let client_id = client_id_for_router.clone();
                         let p2p_outbound = to_server_for_p2p.subscribe();
+                        let tok = p2p_token.clone();
                         tokio::spawn(async move {
                             if let Err(e) =
-                                run_p2p_client(&peer_addr, &peer_id, &client_id, p2p_inbound, p2p_outbound).await
+                                run_p2p_client(&peer_addr, &peer_id, &client_id, &tok, p2p_inbound, p2p_outbound).await
                             {
                                 eprintln!("P2P connection to {} failed: {}", peer_addr, e);
                             }
