@@ -404,26 +404,7 @@ impl ClipboardMonitor {
             };
 
             let path = std::path::Path::new(&path);
-            if !path.is_file() {
-                continue;
-            }
-
-            let metadata = std::fs::metadata(path).ok()?;
-            let size = metadata.len();
-
-            let data = std::fs::read(path).ok()?;
-            let name = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-
-            files.push(CopiedFile {
-                name,
-                data: encoded,
-                size,
-            });
+            files.extend(collect_files_from_path(path));
         }
 
         if files.is_empty() {
@@ -758,23 +739,7 @@ return output
                 continue;
             }
             let p = std::path::Path::new(path);
-            if !p.is_file() {
-                continue;
-            }
-            let metadata = std::fs::metadata(p).ok()?;
-            let size = metadata.len();
-            let data = std::fs::read(p).ok()?;
-            let name = p
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-            files.push(CopiedFile {
-                name,
-                data: encoded,
-                size,
-            });
+            files.extend(collect_files_from_path(p));
         }
 
         if files.is_empty() {
@@ -864,17 +829,7 @@ return output
             };
 
             let p = std::path::Path::new(&path);
-            if !p.is_file() {
-                continue;
-            }
-
-            let metadata = std::fs::metadata(p).ok()?;
-            let size = metadata.len();
-
-            let data = std::fs::read(p).ok()?;
-            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-            files.push(CopiedFile { name, data: encoded, size });
+            files.extend(collect_files_from_path(p));
         }
 
         if files.is_empty() { None } else { Some(files) }
@@ -919,23 +874,41 @@ return output
         std::fs::create_dir_all(&self.recv_dir)?;
 
         let mut paths = Vec::new();
+        let mut top_level_items: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         for file in files {
-            // Sanitize filename
-            let name = std::path::Path::new(&file.name)
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+            // Sanitize: reject absolute paths and directory traversal
+            let rel = std::path::Path::new(&file.name);
+            if rel.is_absolute()
+                || rel
+                    .components()
+                    .any(|c| c == std::path::Component::ParentDir)
+            {
+                continue;
+            }
+            let name = file.name.replace('\\', "/");
             if name.is_empty() {
                 continue;
             }
+
             let dest = self.recv_dir.join(&name);
+
+            // Create parent directories for nested files (e.g. "folder/sub/file.txt")
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
             let data = base64::engine::general_purpose::STANDARD
                 .decode(&file.data)
                 .map_err(|e| anyhow::anyhow!("Failed to decode file: {}", e))?;
             std::fs::write(&dest, &data)?;
-            paths.push(dest.to_string_lossy().to_string());
+
+            // Track top-level item (file or folder root) for clipboard URI
+            let top = name.split('/').next().unwrap_or(&name);
+            top_level_items.insert(self.recv_dir.join(top).to_string_lossy().to_string());
         }
+
+        paths.extend(top_level_items);
         Ok(paths)
     }
 
@@ -967,6 +940,67 @@ return output
             anyhow::bail!("wl-copy file URIs failed");
         }
         Self::find_wl_copy_pid()
+    }
+}
+
+/// Collect files from a path. If it's a file, return it directly.
+/// If it's a directory, recursively walk and return all files with relative paths
+/// preserving directory structure (e.g. "folder/sub/file.txt").
+fn collect_files_from_path(path: &std::path::Path) -> Vec<CopiedFile> {
+    let mut files = Vec::new();
+
+    if path.is_file() {
+        if let Ok(data) = std::fs::read(path) {
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let size = data.len() as u64;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+            files.push(CopiedFile {
+                name,
+                data: encoded,
+                size,
+            });
+        }
+    } else if path.is_dir() {
+        // Use the directory name as the root of relative paths
+        let dir_name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        walk_dir_for_copy(path, &dir_name, &mut files);
+    }
+
+    files
+}
+
+/// Recursively walk a directory and collect files with relative paths.
+fn walk_dir_for_copy(dir: &std::path::Path, prefix: &str, files: &mut Vec<CopiedFile>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let rel_path = format!("{}/{}", prefix, name);
+
+        if path.is_file() {
+            if let Ok(data) = std::fs::read(&path) {
+                let size = data.len() as u64;
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+                files.push(CopiedFile {
+                    name: rel_path,
+                    data: encoded,
+                    size,
+                });
+            }
+        } else if path.is_dir() {
+            walk_dir_for_copy(&path, &rel_path, files);
+        }
     }
 }
 
