@@ -266,7 +266,7 @@ fn spawn_file_sync_task(
     })
 }
 
-/// P2P: connect to a peer on LAN and relay clipboard messages directly.
+/// P2P: connect to a peer on LAN and relay clipboard messages directly (TLS encrypted).
 async fn run_p2p_client(
     addr: &str,
     _peer_id: &str,
@@ -278,9 +278,16 @@ async fn run_p2p_client(
     use tokio::net::TcpStream;
 
     let stream = TcpStream::connect(addr).await?;
-    println!("P2P: connected to peer at {}", addr);
 
-    let (mut reader, mut writer) = stream.into_split();
+    // TLS encrypt the P2P connection (skip verify — both sides use self-signed certs)
+    let connector = tls::build_client_tls(None, true)?;
+    let server_name = tls::parse_server_name(addr)?;
+    let tls_stream = connector.connect(server_name, stream).await?;
+    println!("P2P: connected to peer at {} (TLS)", addr);
+
+    let (reader, writer) = tokio::io::split(tls_stream);
+    let mut reader = reader;
+    let mut writer = writer;
     let client_id = our_client_id.to_string();
 
     // Receive from peer
@@ -350,7 +357,7 @@ async fn run_p2p_client(
     Ok(())
 }
 
-/// P2P: listen for incoming peer connections on LAN.
+/// P2P: listen for incoming peer connections on LAN (TLS encrypted).
 fn spawn_p2p_listener(
     listen_addr: SocketAddr,
     inbound_tx: mpsc::UnboundedSender<ClipboardMessage>,
@@ -359,10 +366,22 @@ fn spawn_p2p_listener(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         use tokio::net::TcpListener;
+        use tokio_rustls::TlsAcceptor;
+
+        // Generate self-signed cert for P2P TLS
+        let tls_acceptor = match tls::generate_self_signed_cert()
+            .and_then(|(cert, key)| tls::build_server_tls_from_pem(&cert, &key))
+        {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("P2P: failed to generate TLS cert: {}", e);
+                return;
+            }
+        };
 
         let listener = match TcpListener::bind(listen_addr).await {
             Ok(l) => {
-                println!("P2P: listening on {}", listen_addr);
+                println!("P2P: listening on {} (TLS)", listen_addr);
                 l
             }
             Err(e) => {
@@ -376,7 +395,16 @@ fn spawn_p2p_listener(
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            println!("P2P: accepted connection from {}", addr);
+
+            // TLS handshake
+            let tls_stream = match tls_acceptor.accept(stream).await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("P2P: TLS handshake failed from {}: {}", addr, e);
+                    continue;
+                }
+            };
+            println!("P2P: accepted connection from {} (TLS)", addr);
 
             let inbound = inbound_tx.clone();
             let outbound = outbound_tx.subscribe();
@@ -385,7 +413,9 @@ fn spawn_p2p_listener(
             tokio::spawn(async move {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-                let (mut reader, mut writer) = stream.into_split();
+                let (reader, writer) = tokio::io::split(tls_stream);
+                let mut reader = reader;
+                let mut writer = writer;
 
                 let recv_handle = tokio::spawn(async move {
                     loop {
