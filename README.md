@@ -26,6 +26,10 @@ A cross-platform clipboard synchronization tool for Linux and macOS, written in 
 - 🏠 P2P LAN mode — automatic direct connection between clients on the same network
 - 📡 LAN discovery fallback — UDP broadcast finds peers when server is unreachable
 - 🐳 Docker support for headless relay servers
+- 🖱️ Mouse sharing — Synergy-style cursor transition between screens at screen edge (P2P)
+- ⌨️ Keyboard forwarding — type on one machine, input appears on the other
+- 📂 Drag-to-edge file transfer — drag files to screen edge to send them to the peer
+- 🪞 Mirror edge mapping — left↔right, top↔bottom for intuitive multi-screen layout
 
 ## System Requirements
 
@@ -36,17 +40,19 @@ A cross-platform clipboard synchronization tool for Linux and macOS, written in 
 
 ### Linux System Dependencies
 
-**Build dependencies (X11 libs):**
+**Build dependencies:**
 ```bash
 # Ubuntu/Debian
-sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
+sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev libxi-dev libxtst-dev
 
 # Fedora
-sudo dnf install libxcb-devel
+sudo dnf install libxcb-devel libXi-devel libXtst-devel
 
 # Arch Linux
-sudo pacman -S libxcb
+sudo pacman -S libxcb libxi libxtst
 ```
+
+> **Note:** `libxi-dev` and `libxtst-dev` are required by the `rdev` crate (mouse sharing). On Wayland, input grab uses evdev natively but the X11 libs are still needed at compile time.
 
 **Runtime dependencies:**
 
@@ -309,6 +315,44 @@ When you copy a file, copi reads its content, sends it over the network, writes 
 
 The `--max-file-size` flag controls the maximum size for clipboard file transfers (default 10 MB). Requires `xclip` on GNOME or `wl-clipboard` on other Wayland compositors.
 
+### Mouse Sharing & Drag-to-Edge File Transfer
+
+Share your mouse and keyboard across P2P-connected devices. When your cursor reaches the configured screen edge, it seamlessly transitions to the peer's screen — like Synergy/Barrier but built into copi.
+
+```bash
+# Machine A (peer is to the right)
+copi client --server 192.168.1.100:9527 --token my-token --mouse-share --peer-edge right
+
+# Machine B (peer is to the left)
+copi client --server 192.168.1.100:9527 --token my-token --mouse-share --peer-edge left
+```
+
+**Mirror edge mapping:** When cursor exits one edge, it enters the peer from the opposite edge:
+
+| Exit edge (sender) | Entry edge (receiver) |
+|---|---|
+| Left | Right |
+| Right | Left |
+| Top | Bottom |
+| Bottom | Top |
+
+Position along the edge is preserved — exiting at 30% down the right edge enters at 30% down the left edge on the peer.
+
+**Drag-to-edge file transfer:** Drag files to the screen edge to transfer them to the peer. Files appear in the peer's sync directory. Uses the same mirror edge rule — drag to the left edge and files arrive from the right on the peer.
+
+**How it works:**
+- Mouse position is tracked via `rdev::grab()` on a dedicated OS thread
+- Edge hit detection triggers state transition: `Local → Remote`
+- In Remote state, all mouse/keyboard events are captured and forwarded as protocol messages
+- Receiving side simulates events via `rdev::simulate()`
+- Moving cursor back to the entry edge sends `MouseReturn` to release control
+
+**Requirements:**
+- P2P connection required (mouse sharing is too latency-sensitive for server relay)
+- Both sides must enable `--mouse-share` and configure `--peer-edge`
+- Linux Wayland: requires root or `input` group membership (evdev access)
+- macOS: requires Accessibility permission (System Preferences → Security & Privacy → Privacy → Accessibility)
+
 ### Supported Content
 
 - ✅ Plain text clipboard
@@ -418,6 +462,9 @@ src/
     ├── clipboard.rs       # Clipboard monitoring (arboard/wl-clipboard/xclip/osascript)
     ├── discovery.rs       # UDP LAN peer discovery (fallback when server is down)
     ├── files.rs           # Directory sync file monitoring
+    ├── input.rs           # Input simulation (mouse/keyboard) on receiving side
+    ├── mouse.rs           # Mouse grab, edge detection, state machine, event forwarding
+    ├── screen.rs          # Screen geometry, edge config, coordinate normalization
     ├── sync.rs            # TCP protocol, server, client, auth, P2P peer tracking
     └── tls.rs             # TLS configuration and certificate handling
 ```
@@ -434,6 +481,7 @@ src/
 - `rcgen` - Self-signed certificate generation
 - `base64` - Image data encoding
 - `image` - Image processing and format conversion
+- `rdev` - Cross-platform mouse/keyboard input capture and simulation (mouse sharing)
 
 ### Docker
 
