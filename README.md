@@ -238,6 +238,46 @@ copi client --server 192.168.1.100:9527 --token my-secret-token --secret my-serv
 
 The client automatically monitors local clipboard changes (including text and images) and syncs with the server.
 
+### P2P Mode (no server required)
+
+Copi can work **without a server** on a local network. When the server is unreachable, clients automatically discover each other via UDP broadcast and connect directly:
+
+```bash
+# Just start clients on the same LAN with the same token — no server needed
+copi client --server any-hostname --token shared-secret
+
+# After 2 failed server attempts, LAN discovery activates automatically
+# Clients find each other and sync directly via P2P
+```
+
+**Required ports for P2P:**
+
+| Port | Protocol | Purpose |
+|---|---|---|
+| 9528 | TCP | P2P direct connection (clipboard data) |
+| 9529 | UDP | LAN peer discovery (broadcast) |
+
+**Linux — open P2P ports:**
+```bash
+# ufw
+sudo ufw allow 9528/tcp
+sudo ufw allow 9529/udp
+
+# firewalld
+sudo firewall-cmd --add-port=9528/tcp --add-port=9529/udp --permanent
+sudo firewall-cmd --reload
+
+# iptables
+sudo iptables -A INPUT -p tcp --dport 9528 -j ACCEPT
+sudo iptables -A INPUT -p udp --dport 9529 -j ACCEPT
+```
+
+If you only use server mode (no P2P), these ports can remain closed. P2P and LAN discovery only activate when clients are on the same network.
+
+**macOS — local network permission:**
+
+macOS will prompt with a dialog asking to allow copi to find and connect to devices on your local network. **This is normal behavior** — copi uses UDP broadcast for LAN peer discovery and TCP for direct P2P connections. Click "Allow" to enable P2P mode.
+
 ### File Sync
 
 Sync a directory across all connected peers using `--sync-dir`. Files in the directory are monitored for changes and automatically synced. Use `--max-file-size` to limit the maximum file size (in MB, default 10 MB).
