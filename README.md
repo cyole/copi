@@ -19,6 +19,7 @@ A cross-platform clipboard synchronization tool for Linux and macOS, written in 
 - 🔒 Uses SHA-256 to avoid duplicate synchronization
 - 🎯 Full Wayland support (using wl-clipboard)
 - 🔑 Token-based authentication (HMAC-SHA256 challenge-response, token never sent over the wire)
+- 👥 Multi-user support — each token = separate private clipboard group on the same server
 - 🔐 TLS encryption (auto-generated self-signed certs or bring your own)
 - 🐳 Docker support for headless relay servers
 
@@ -143,16 +144,19 @@ You can require clients to authenticate with a token before syncing. The token i
 
 This prevents eavesdropping and replay attacks even without TLS.
 
+The server supports two modes:
+
+**Single-group mode** (`--token` set on server):
 ```bash
-# Via CLI flag
 copi server --token my-secret-token
-
-# Via environment variable
-export COPI_TOKEN=my-secret-token
-copi server
 ```
+All clients must provide the same token. Server validates the HMAC. One shared clipboard.
 
-When a token is set, only clients providing the matching token will be allowed to connect. Without `--token`, the server accepts all connections (backward-compatible).
+**Multi-group mode** (no `--token` on server):
+```bash
+copi server --relay-only --tls-auto-cert
+```
+Any client can connect with any token. Clients with the **same token** share a clipboard group; different tokens are isolated. One server, unlimited private clipboard groups. The token acts as a room key — only people who know it can join that group.
 
 **TLS Encryption:**
 
@@ -297,31 +301,21 @@ Run the server as a Docker container with TLS and token authentication:
 # Build the image
 docker build -t copi-server .
 
-# Run with token + auto-generated TLS cert
+# Multi-group mode (recommended) — each token = private clipboard group
+docker run -d -p 9527:9527 copi-server server --relay-only --addr 0.0.0.0:9527 --tls-auto-cert
+
+# Single-group mode — one shared clipboard, server validates token
 docker run -d -p 9527:9527 -e COPI_TOKEN=my-secret-token copi-server
-
-# Or with your own certificates
-docker run -d -p 9527:9527 \
-  -e COPI_TOKEN=my-secret-token \
-  -v /path/to/certs:/certs:ro \
-  copi-server server --relay-only --addr 0.0.0.0:9527 \
-  --cert /certs/cert.pem --key /certs/key.pem
 ```
 
-Or use Docker Compose:
+Then connect clients. Each user picks their own token — users with the same token share a clipboard:
 
 ```bash
-# Set your token
-echo "COPI_TOKEN=my-secret-token" > .env
+# User A's machines (share clipboard with each other)
+copi client --server your-server.example.com --token user-a-secret --tls-skip-verify
 
-# Start
-docker compose up -d
-```
-
-Then connect clients:
-
-```bash
-copi client --server YOUR_SERVER_IP:9527 --token my-secret-token --tls-skip-verify
+# User B's machines (separate clipboard, same server)
+copi client --server your-server.example.com --token user-b-secret --tls-skip-verify
 ```
 
 ### Arch Linux (systemd user service)
