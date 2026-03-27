@@ -365,10 +365,20 @@ copi client --server your-server.example.com \
 
 ### Arch Linux (systemd user service)
 
-Install the binary and set up a service that starts at login:
+Install required packages:
 
 ```bash
-# Build and install
+# Runtime: pick one based on your desktop
+sudo pacman -S xclip          # GNOME Wayland — file copy/paste via XWayland
+sudo pacman -S wl-clipboard   # Sway, Hyprland — clipboard access via wl-clipboard
+
+# Build dependencies
+sudo pacman -S rust libxcb
+```
+
+Build and install:
+
+```bash
 cargo build --release
 mkdir -p ~/.local/bin
 cp target/release/copi ~/.local/bin/
