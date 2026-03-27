@@ -29,6 +29,10 @@ pub struct ClipboardMonitor {
     max_file_size: u64,
     /// Temp dir for writing received clipboard files so Ctrl+V works
     recv_dir: PathBuf,
+    /// PID of our wl-copy background process (if any), killed before reading
+    /// to prevent deadlocks where wl-paste talks to our own wl-copy.
+    #[cfg(target_os = "linux")]
+    wl_copy_pid: Option<u32>,
 }
 
 impl ClipboardMonitor {
@@ -40,17 +44,22 @@ impl ClipboardMonitor {
         #[cfg(target_os = "linux")]
         {
             let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+            let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+            let is_gnome = desktop.to_uppercase().contains("GNOME");
 
-            if is_wayland {
-                // Check if wl-clipboard tools are available
+            if is_wayland && !is_gnome {
+                // Use wl-clipboard on non-GNOME Wayland compositors (Sway, Hyprland, etc.)
+                // On GNOME, wl-clipboard creates popup windows that steal focus — use arboard instead.
                 if Self::check_wl_clipboard_available() {
-                    println!("Detected Wayland, using wl-clipboard backend");
+                    println!("Detected Wayland (non-GNOME), using wl-clipboard backend");
                     return Ok(Self {
                         clipboard: None,
                         backend: ClipboardBackend::WlClipboard,
                         last_hash: None,
                         max_file_size,
                         recv_dir,
+                        #[cfg(target_os = "linux")]
+                        wl_copy_pid: None,
                     });
                 } else {
                     println!(
@@ -71,6 +80,8 @@ impl ClipboardMonitor {
             last_hash: None,
             max_file_size,
             recv_dir,
+            #[cfg(target_os = "linux")]
+            wl_copy_pid: None,
         })
     }
 
@@ -181,6 +192,9 @@ impl ClipboardMonitor {
             }
             #[cfg(target_os = "linux")]
             ClipboardBackend::WlClipboard => {
+                // Kill our own wl-copy before reading to prevent deadlocks
+                self.kill_own_wl_copy();
+
                 // Check for file URIs first (Ctrl+C on files in file manager)
                 if let Some(files) = self.wl_paste_files() {
                     return self.dedup(ClipboardContent::FileCopy { files });
@@ -354,21 +368,14 @@ impl ClipboardMonitor {
     #[cfg(target_os = "linux")]
     fn wl_paste_files(&self) -> Option<Vec<CopiedFile>> {
         // Check what types are available on the clipboard
-        let types_output = Command::new("wl-paste")
-            .arg("--list-types")
-            .output()
-            .ok()?;
+        let types_output = Self::wl_paste_cmd(&["--list-types"]).ok()?;
         let types = String::from_utf8_lossy(&types_output.stdout);
         if !types.lines().any(|t| t.trim() == "text/uri-list") {
             return None;
         }
 
         // Get the URI list
-        let uri_output = Command::new("wl-paste")
-            .arg("--type")
-            .arg("text/uri-list")
-            .output()
-            .ok()?;
+        let uri_output = Self::wl_paste_cmd(&["--type", "text/uri-list"]).ok()?;
         if !uri_output.status.success() {
             return None;
         }
@@ -427,9 +434,37 @@ impl ClipboardMonitor {
         }
     }
 
+    /// Kill our own wl-copy process before reading clipboard to prevent deadlocks.
+    /// When copi sets clipboard via wl-copy, a background process stays alive to serve
+    /// paste requests. If we then call wl-paste, it asks our wl-copy for data, creating
+    /// a deadlock. Killing our wl-copy first forces the compositor to serve cached data.
+    #[cfg(target_os = "linux")]
+    fn kill_own_wl_copy(&mut self) {
+        if let Some(pid) = self.wl_copy_pid.take() {
+            let _ = Command::new("kill")
+                .arg(pid.to_string())
+                .output();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// Run wl-paste with timeout to prevent hangs from unresponsive clipboard owners.
+    /// Suppresses stderr (wl-paste prints errors like "not available as type" to stderr).
+    #[cfg(target_os = "linux")]
+    fn wl_paste_cmd(args: &[&str]) -> Result<std::process::Output> {
+        use std::process::Stdio;
+        let output = Command::new("timeout")
+            .arg("3")
+            .arg("wl-paste")
+            .args(args)
+            .stderr(Stdio::null())
+            .output()?;
+        Ok(output)
+    }
+
     #[cfg(target_os = "linux")]
     fn wl_paste() -> Result<String> {
-        let output = Command::new("wl-paste").arg("--no-newline").output()?;
+        let output = Self::wl_paste_cmd(&["--no-newline"])?;
 
         if output.status.success() {
             Ok(String::from_utf8(output.stdout)?)
@@ -440,10 +475,7 @@ impl ClipboardMonitor {
 
     #[cfg(target_os = "linux")]
     fn wl_paste_image() -> Result<ClipboardContent> {
-        let output = Command::new("wl-paste")
-            .arg("--type")
-            .arg("image/png")
-            .output()?;
+        let output = Self::wl_paste_cmd(&["--type", "image/png"])?;
 
         if output.status.success() && !output.stdout.is_empty() {
             let png_data = &output.stdout;
@@ -537,7 +569,9 @@ impl ClipboardMonitor {
                 }
                 #[cfg(target_os = "linux")]
                 ClipboardBackend::WlClipboard => {
-                    Self::wl_copy_file_uris(&paths)?;
+                    self.kill_own_wl_copy();
+                    let pid = Self::wl_copy_file_uris(&paths)?;
+                    self.wl_copy_pid = Some(pid);
                 }
             }
             self.last_hash = Some(Self::hash_content(content));
@@ -582,20 +616,19 @@ impl ClipboardMonitor {
                 }
             }
             #[cfg(target_os = "linux")]
-            ClipboardBackend::WlClipboard => match content {
-                ClipboardContent::Text(text) => {
-                    Self::wl_copy_text(text)?;
-                }
-                ClipboardContent::Image { data, .. } => {
-                    Self::wl_copy_image(data)?;
-                }
-                ClipboardContent::Html { html, text: _ } => {
-                    Self::wl_copy_html(html)?;
-                }
-                ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } => {
-                    return Ok(());
-                }
-            },
+            ClipboardBackend::WlClipboard => {
+                // Kill previous wl-copy before setting new content
+                self.kill_own_wl_copy();
+                let pid = match content {
+                    ClipboardContent::Text(text) => Self::wl_copy_text(text)?,
+                    ClipboardContent::Image { data, .. } => Self::wl_copy_image(data)?,
+                    ClipboardContent::Html { html, text: _ } => Self::wl_copy_html(html)?,
+                    ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } => {
+                        return Ok(());
+                    }
+                };
+                self.wl_copy_pid = Some(pid);
+            }
         }
 
         self.last_hash = Some(Self::hash_content(content));
@@ -603,30 +636,30 @@ impl ClipboardMonitor {
     }
 
     #[cfg(target_os = "linux")]
-    fn wl_copy_text(content: &str) -> Result<()> {
+    fn wl_copy_text(content: &str) -> Result<u32> {
         use std::io::Write;
         use std::process::Stdio;
 
-        let mut child = Command::new("wl-copy").stdin(Stdio::piped()).spawn()?;
+        let mut child = Command::new("wl-copy")
+            .stdin(Stdio::piped())
+            .spawn()?;
 
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(content.as_bytes())?;
         }
 
         let status = child.wait()?;
-        if status.success() {
-            Ok(())
-        } else {
-            anyhow::bail!("wl-copy failed")
+        if !status.success() {
+            anyhow::bail!("wl-copy failed");
         }
+        Self::find_wl_copy_pid()
     }
 
     #[cfg(target_os = "linux")]
-    fn wl_copy_image(base64_data: &str) -> Result<()> {
+    fn wl_copy_image(base64_data: &str) -> Result<u32> {
         use std::io::Write;
         use std::process::Stdio;
 
-        // Decode base64 to get PNG data
         let png_data =
             base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data)?;
 
@@ -641,15 +674,14 @@ impl ClipboardMonitor {
         }
 
         let status = child.wait()?;
-        if status.success() {
-            Ok(())
-        } else {
-            anyhow::bail!("wl-copy image failed")
+        if !status.success() {
+            anyhow::bail!("wl-copy image failed");
         }
+        Self::find_wl_copy_pid()
     }
 
     #[cfg(target_os = "linux")]
-    fn wl_copy_html(html: &str) -> Result<()> {
+    fn wl_copy_html(html: &str) -> Result<u32> {
         use std::io::Write;
         use std::process::Stdio;
 
@@ -664,11 +696,20 @@ impl ClipboardMonitor {
         }
 
         let status = child.wait()?;
-        if status.success() {
-            Ok(())
-        } else {
-            anyhow::bail!("wl-copy html failed")
+        if !status.success() {
+            anyhow::bail!("wl-copy html failed");
         }
+        Self::find_wl_copy_pid()
+    }
+
+    /// Find the newest wl-copy process PID (the forked background child).
+    #[cfg(target_os = "linux")]
+    fn find_wl_copy_pid() -> Result<u32> {
+        let output = Command::new("pgrep").arg("-n").arg("wl-copy").output()?;
+        let s = String::from_utf8_lossy(&output.stdout);
+        s.trim()
+            .parse::<u32>()
+            .map_err(|_| anyhow::anyhow!("Could not find wl-copy PID"))
     }
 
     /// Detect files on macOS clipboard (Cmd+C in Finder).
@@ -818,18 +859,16 @@ return output
 
     /// Set clipboard to file URIs via wl-copy so Ctrl+V pastes the files.
     #[cfg(target_os = "linux")]
-    fn wl_copy_file_uris(paths: &[String]) -> Result<()> {
+    fn wl_copy_file_uris(paths: &[String]) -> Result<u32> {
         use std::io::Write;
         use std::process::Stdio;
 
-        // Build URI list
         let uri_list: String = paths
             .iter()
             .map(|p| format!("file://{}", p))
             .collect::<Vec<_>>()
             .join("\r\n");
 
-        // Set text/uri-list so file managers recognize it
         let mut child = Command::new("wl-copy")
             .arg("--type")
             .arg("text/uri-list")
@@ -845,8 +884,7 @@ return output
         if !status.success() {
             anyhow::bail!("wl-copy file URIs failed");
         }
-
-        Ok(())
+        Self::find_wl_copy_pid()
     }
 }
 
