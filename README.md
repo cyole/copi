@@ -408,6 +408,68 @@ systemctl --user status copi.service
 journalctl --user -u copi.service -f
 ```
 
+### macOS (launchd user agent)
+
+Install the binary and set up a service that starts at login:
+
+```bash
+# Build and install
+cargo build --release
+mkdir -p ~/.local/bin
+cp target/release/copi ~/.local/bin/
+```
+
+Create `~/Library/LaunchAgents/com.copi.client.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.copi.client</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOUR_USERNAME/.local/bin/copi</string>
+        <string>client</string>
+        <string>--server</string>
+        <string>your-server.example.com</string>
+        <string>--token</string>
+        <string>your-secret-token</string>
+        <string>--secret</string>
+        <string>your-server-secret</string>
+        <string>--tls-skip-verify</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/copi-client.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/copi-client.err</string>
+</dict>
+</plist>
+```
+
+Enable and start:
+
+```bash
+# Load the service (starts immediately and on every login)
+launchctl load ~/Library/LaunchAgents/com.copi.client.plist
+
+# Check status
+launchctl list | grep copi
+
+# View logs
+tail -f /tmp/copi-client.log
+
+# Stop the service
+launchctl unload ~/Library/LaunchAgents/com.copi.client.plist
+```
+
+No extra dependencies required — macOS provides native clipboard access and Finder file detection out of the box.
+
 ## Security Considerations
 
 - **Token authentication** uses HMAC-SHA256 challenge-response — the token is never transmitted over the network, preventing eavesdropping and replay attacks
