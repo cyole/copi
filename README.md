@@ -317,6 +317,17 @@ Copi is designed to be lightweight. Real-world measurements:
 | Docker image size | 113 MB |
 | Network I/O (16 min) | ~20 KB in/out |
 
+### Client (macOS, Apple Silicon, launchd)
+
+| Metric | Value |
+|---|---|
+| RSS (resident memory) | ~20 MB |
+| Virtual memory | ~422 MB (normal for macOS) |
+| CPU usage (idle) | 0.0% |
+| CPU time (17 min uptime) | ~6s total |
+| Threads | 10 |
+| Binary size | 8.7 MB (7.4 MB stripped) |
+
 The client polls the clipboard every 500ms but only transfers data when content changes (SHA-256 deduplication). At idle, CPU usage is effectively zero. Memory footprint stays under 20 MB on both client and server.
 
 ## Architecture
