@@ -291,6 +291,34 @@ The `--max-file-size` flag controls the maximum size for clipboard file transfer
    - Uses SHA-256 hash values to track clipboard content
    - Avoids redundant synchronization of identical content
 
+## Performance
+
+Copi is designed to be lightweight. Real-world measurements:
+
+### Client (Linux, Arch, GNOME Wayland)
+
+| Metric | Value |
+|---|---|
+| RSS (resident memory) | ~11 MB |
+| Memory (systemd reported) | ~18 MB |
+| Peak memory | ~21 MB |
+| CPU usage (idle) | 0.0% |
+| CPU time (26 min uptime) | ~7s total |
+| Binary size | 16 MB (14 MB stripped) |
+
+### Server (Docker, ARM64, Oracle Cloud)
+
+| Metric | Value |
+|---|---|
+| RSS (resident memory) | ~7.5 MB |
+| Virtual memory | ~80 MB |
+| CPU usage (idle) | 0.00% |
+| Threads | 2 |
+| Docker image size | 113 MB |
+| Network I/O (16 min) | ~20 KB in/out |
+
+The client polls the clipboard every 500ms but only transfers data when content changes (SHA-256 deduplication). At idle, CPU usage is effectively zero. Memory footprint stays under 20 MB on both client and server.
+
 ## Architecture
 
 ```
