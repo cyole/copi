@@ -133,9 +133,11 @@ impl ClipboardMonitor {
             }
             ClipboardContent::FileCopy { files } => {
                 hasher.update(b"filecopy:");
-                for f in files {
-                    hasher.update(f.name.as_bytes());
-                    hasher.update(&f.size.to_le_bytes());
+                let mut sorted_names: Vec<_> = files.iter().map(|f| (&f.name, f.size)).collect();
+                sorted_names.sort_by(|a, b| a.0.cmp(b.0));
+                for (name, size) in sorted_names {
+                    hasher.update(name.as_bytes());
+                    hasher.update(&size.to_le_bytes());
                 }
             }
             ClipboardContent::PeerDiscovery { .. } => {
@@ -151,8 +153,15 @@ impl ClipboardMonitor {
             ClipboardBackend::Arboard => {
                 // Check for file URIs first (Ctrl+C / Cmd+C on files)
                 #[cfg(target_os = "macos")]
-                if let Some(files) = self.macos_paste_files() {
-                    return self.dedup(ClipboardContent::FileCopy { files });
+                {
+                    if let Some(files) = self.macos_paste_files() {
+                        return self.dedup(ClipboardContent::FileCopy { files });
+                    }
+                    // If clipboard has file references but we couldn't read files,
+                    // skip arboard — it can't handle file formats and would spam errors.
+                    if self.macos_clipboard_has_files() {
+                        return Ok(None);
+                    }
                 }
                 #[cfg(target_os = "linux")]
                 if let Some(files) = self.xclip_paste_files() {
@@ -533,7 +542,14 @@ impl ClipboardMonitor {
                 ClipboardBackend::Arboard => {
                     #[cfg(target_os = "macos")]
                     {
-                        Self::macos_copy_files(&paths)?;
+                        // macOS NSPasteboard can't reliably hold multiple file URLs.
+                        // If there are multiple loose files, set the containing folder
+                        // so Finder can paste the whole folder.
+                        if paths.len() > 1 {
+                            Self::macos_copy_files(&[self.recv_dir.to_string_lossy().to_string()])?;
+                        } else {
+                            Self::macos_copy_files(&paths)?;
+                        }
                     }
                     #[cfg(target_os = "linux")]
                     {
@@ -685,6 +701,21 @@ impl ClipboardMonitor {
             .map_err(|_| anyhow::anyhow!("Could not find wl-copy PID"))
     }
 
+    /// Check if macOS clipboard contains file references that arboard can't read.
+    #[cfg(target_os = "macos")]
+    fn macos_clipboard_has_files(&self) -> bool {
+        Command::new("osascript")
+            .arg("-e")
+            .arg("clipboard info")
+            .output()
+            .ok()
+            .map(|o| {
+                let info = String::from_utf8_lossy(&o.stdout);
+                info.contains("furl")
+            })
+            .unwrap_or(false)
+    }
+
     /// Detect files on macOS clipboard (Cmd+C in Finder).
     #[cfg(target_os = "macos")]
     fn macos_paste_files(&self) -> Option<Vec<CopiedFile>> {
@@ -696,30 +727,29 @@ impl ClipboardMonitor {
             .ok()?;
 
         let info = String::from_utf8_lossy(&output.stdout);
-        // Finder file copies show «class furl» in clipboard info
+        // File references show «class furl» in clipboard info
         if !info.contains("furl") {
             return None;
         }
 
-        // Get file paths from clipboard
+        // Get file paths from clipboard using NSPasteboard to read all items
         let output = Command::new("osascript")
             .arg("-e")
             .arg(
                 r#"
+use framework "AppKit"
+set pb to current application's NSPasteboard's generalPasteboard()
+set pbItems to pb's pasteboardItems()
 set output to ""
-try
-    set clipData to the clipboard as «class furl»
-    set output to POSIX path of clipData
-on error
-    try
-        set clipList to the clipboard as list
-        repeat with f in clipList
-            try
-                set output to output & POSIX path of (f as «class furl») & linefeed
-            end try
-        end repeat
-    end try
-end try
+repeat with pbItem in pbItems
+    set urlStr to (pbItem's stringForType:"public.file-url")
+    if urlStr is not missing value then
+        set fileURL to current application's |NSURL|'s URLWithString:urlStr
+        if fileURL is not missing value then
+            set output to output & (fileURL's |path|() as text) & linefeed
+        end if
+    end if
+end repeat
 return output
 "#,
             )
@@ -749,20 +779,14 @@ return output
         }
     }
 
-    /// Set macOS clipboard to file references so Cmd+V in Finder pastes them.
+    /// Set macOS clipboard to a file/folder reference so Cmd+V in Finder pastes it.
     #[cfg(target_os = "macos")]
     fn macos_copy_files(paths: &[String]) -> Result<()> {
-        // Build AppleScript to set clipboard to POSIX file references
-        let file_refs: Vec<String> = paths
-            .iter()
-            .map(|p| format!("POSIX file \"{}\"", p.replace('\"', "\\\"")))
-            .collect();
-
-        let script = if file_refs.len() == 1 {
-            format!("set the clipboard to {}", file_refs[0])
-        } else {
-            format!("set the clipboard to {{{}}}", file_refs.join(", "))
-        };
+        let path = paths.first().ok_or_else(|| anyhow::anyhow!("No paths to set"))?;
+        let script = format!(
+            "set the clipboard to POSIX file \"{}\"",
+            path.replace('\"', "\\\"")
+        );
 
         let output = Command::new("osascript")
             .arg("-e")
