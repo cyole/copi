@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use hmac::{Hmac, Mac};
 use rand::Rng;
+use super::screen::ScreenEdge;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -59,6 +60,62 @@ pub enum ClipboardContent {
     PeerDiscovery {
         peers: Vec<PeerEntry>,
     },
+
+    // --- Mouse sharing messages ---
+
+    /// Screen geometry exchange — sent when mouse sharing is enabled.
+    ScreenInfo {
+        width: u32,
+        height: u32,
+        client_id: String,
+    },
+
+    /// Mouse sharing capability advertisement.
+    MouseShareOffer {
+        client_id: String,
+        /// Which edge this peer exposes for the remote cursor transition.
+        accept_edge: ScreenEdge,
+    },
+
+    /// Mouse sharing accepted by the remote peer.
+    MouseShareAccept {
+        client_id: String,
+    },
+
+    /// Mouse position update (normalized [0.0, 1.0] coordinates).
+    MouseMove {
+        x: f64,
+        y: f64,
+    },
+
+    /// Mouse button press/release.
+    MouseButton {
+        button: u8,      // 0=left, 1=right, 2=middle, 3+=extra
+        pressed: bool,
+    },
+
+    /// Scroll wheel event.
+    MouseScroll {
+        delta_x: i32,
+        delta_y: i32,
+    },
+
+    /// Keyboard event forwarded during mouse sharing.
+    KeyEvent {
+        /// Key name (rdev::Key debug string for cross-platform compatibility)
+        key: String,
+        pressed: bool,
+    },
+
+    /// Cursor has returned to the originating machine.
+    MouseReturn,
+
+    /// File drag detected at screen edge — initiates transfer to peer.
+    DragTransfer {
+        files: Vec<CopiedFile>,
+        /// The edge from which files enter the receiving screen (mirrored from exit).
+        entry_edge: ScreenEdge,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -95,6 +152,8 @@ pub struct AuthRequest {
     pub local_ip: String,   // Client's LAN IP (e.g. 192.168.1.x)
     #[serde(default)]
     pub client_id: String,  // Unique client identifier
+    #[serde(default)]
+    pub channel_type: String, // "clipboard" (default) or "input" (mouse sharing)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

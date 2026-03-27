@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use modules::clipboard::ClipboardMonitor;
 use modules::files::FileMonitor;
 use modules::discovery;
+use modules::screen::ScreenEdge;
 use modules::sync::{token_to_group_id, ClipboardContent, ClipboardMessage, SyncClient, SyncServer};
 use modules::tls;
 use std::net::SocketAddr;
@@ -58,6 +59,15 @@ enum Commands {
         /// Maximum file size to sync in megabytes (default: 10 MB)
         #[arg(long, default_value = "10")]
         max_file_size: u64,
+
+        /// Enable mouse sharing with connected peers (P2P only)
+        #[arg(long)]
+        mouse_share: bool,
+
+        /// Screen edge where the peer's display is located (left, right, top, bottom).
+        /// Required when --mouse-share is enabled.
+        #[arg(long, value_parser = parse_screen_edge)]
+        peer_edge: Option<ScreenEdge>,
     },
     Client {
         /// Server address (hostname or IP, port defaults to 9527)
@@ -96,7 +106,20 @@ enum Commands {
         /// Maximum file size to sync in megabytes (default: 10 MB)
         #[arg(long, default_value = "10")]
         max_file_size: u64,
+
+        /// Enable mouse sharing with connected peers (P2P only)
+        #[arg(long)]
+        mouse_share: bool,
+
+        /// Screen edge where the peer's display is located (left, right, top, bottom).
+        /// Required when --mouse-share is enabled.
+        #[arg(long, value_parser = parse_screen_edge)]
+        peer_edge: Option<ScreenEdge>,
     },
+}
+
+fn parse_screen_edge(s: &str) -> Result<ScreenEdge, String> {
+    ScreenEdge::parse(s)
 }
 
 #[tokio::main]
@@ -114,8 +137,13 @@ async fn main() -> Result<()> {
             tls_auto_cert,
             sync_dir,
             max_file_size,
+            mouse_share,
+            peer_edge,
         } => {
-            run_server(addr, relay_only, token, secret, cert, key, tls_auto_cert, sync_dir, max_file_size)
+            if mouse_share && peer_edge.is_none() {
+                anyhow::bail!("--peer-edge is required when --mouse-share is enabled");
+            }
+            run_server(addr, relay_only, token, secret, cert, key, tls_auto_cert, sync_dir, max_file_size, mouse_share, peer_edge)
                 .await?;
         }
         Commands::Client {
@@ -128,7 +156,12 @@ async fn main() -> Result<()> {
             tls_skip_verify,
             sync_dir,
             max_file_size,
+            mouse_share,
+            peer_edge,
         } => {
+            if mouse_share && peer_edge.is_none() {
+                anyhow::bail!("--peer-edge is required when --mouse-share is enabled");
+            }
             run_client(
                 server,
                 listen,
@@ -139,6 +172,8 @@ async fn main() -> Result<()> {
                 tls_skip_verify,
                 sync_dir,
                 max_file_size,
+                mouse_share,
+                peer_edge,
             )
             .await?;
         }
@@ -175,6 +210,38 @@ fn log_content(prefix: &str, content: &ClipboardContent) {
         ClipboardContent::PeerDiscovery { peers } => {
             let ids: Vec<&str> = peers.iter().map(|p| p.local_ip.as_str()).collect();
             println!("{}: P2P peers discovered [{}]", prefix, ids.join(", "));
+        }
+        ClipboardContent::ScreenInfo { width, height, client_id } => {
+            println!("{}: screen info {}x{} from {}", prefix, width, height,
+                &client_id[..8.min(client_id.len())]);
+        }
+        ClipboardContent::MouseShareOffer { client_id, accept_edge } => {
+            println!("{}: mouse share offer from {} (edge: {})", prefix,
+                &client_id[..8.min(client_id.len())], accept_edge);
+        }
+        ClipboardContent::MouseShareAccept { client_id } => {
+            println!("{}: mouse share accepted by {}", prefix,
+                &client_id[..8.min(client_id.len())]);
+        }
+        // Mouse/keyboard events are high-frequency — don't log individually
+        ClipboardContent::MouseMove { .. } => {}
+        ClipboardContent::MouseButton { button, pressed } => {
+            println!("{}: mouse button {} {}", prefix, button,
+                if *pressed { "down" } else { "up" });
+        }
+        ClipboardContent::MouseScroll { .. } => {}
+        ClipboardContent::KeyEvent { key, pressed } => {
+            println!("{}: key {} {}", prefix, key,
+                if *pressed { "down" } else { "up" });
+        }
+        ClipboardContent::MouseReturn => {
+            println!("{}: mouse returned to local", prefix);
+        }
+        ClipboardContent::DragTransfer { files, entry_edge } => {
+            let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+            let total: u64 = files.iter().map(|f| f.size).sum();
+            println!("{}: drag transfer {} file(s) [{}] ({} bytes, entry: {})",
+                prefix, files.len(), names.join(", "), total, entry_edge);
         }
     }
 }
@@ -257,8 +324,17 @@ fn spawn_file_sync_task(
                             continue;
                         }
                     }
-                    if let ClipboardContent::File { ref path, ref data, size } = message.content {
-                        let _ = write_req_tx.send((path.clone(), data.clone(), size));
+                    match &message.content {
+                        ClipboardContent::File { ref path, ref data, size } => {
+                            let _ = write_req_tx.send((path.clone(), data.clone(), *size));
+                        }
+                        ClipboardContent::DragTransfer { ref files, ref entry_edge } => {
+                            println!("Drag transfer received ({} files, entry: {})", files.len(), entry_edge);
+                            for file in files {
+                                let _ = write_req_tx.send((file.name.clone(), file.data.clone(), file.size));
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -570,6 +646,8 @@ async fn run_server(
     tls_auto_cert: bool,
     sync_dir: Option<PathBuf>,
     max_file_size: u64,
+    _mouse_share: bool,
+    _peer_edge: Option<ScreenEdge>,
 ) -> Result<()> {
     println!("Starting clipboard sync server...");
     println!("Platform: {}", std::env::consts::OS);
@@ -762,6 +840,8 @@ async fn run_client(
     tls_skip_verify: bool,
     sync_dir: Option<PathBuf>,
     max_file_size: u64,
+    mouse_share: bool,
+    peer_edge: Option<ScreenEdge>,
 ) -> Result<()> {
     println!("Starting clipboard sync client...");
     println!("Platform: {}", std::env::consts::OS);
@@ -931,6 +1011,29 @@ async fn run_client(
         (sync_handle, bridge_handle)
     });
 
+    // Mouse sharing channels
+    let (mouse_inbound_tx, mouse_inbound_rx) = mpsc::unbounded_channel::<ClipboardMessage>();
+
+    // Spawn mouse sharing tasks if enabled
+    let mouse_handle = if mouse_share {
+        let edge = peer_edge.unwrap(); // validated above
+        let mouse_to_server = to_server_tx.clone();
+        let cid = client_id.clone();
+        Some(modules::mouse::spawn_mouse_sharing(
+            edge,
+            cid,
+            mouse_to_server,
+            mouse_inbound_rx,
+        ))
+    } else {
+        // Drain mouse messages if not enabled (avoid channel backpressure)
+        tokio::spawn(async move {
+            let mut rx = mouse_inbound_rx;
+            while let Some(_) = rx.recv().await {}
+        });
+        None
+    };
+
     // Router task: receives all messages from server and dispatches to
     // clipboard or file sync. Runs on its own lightweight task so it's never
     // blocked by wl-paste or file I/O.
@@ -998,6 +1101,21 @@ async fn run_client(
                     // Clipboard file copy (Ctrl+C) → clipboard handler
                     let _ = clipboard_rx_tx.send(message);
                 }
+                // Mouse sharing messages → mouse input channel
+                ClipboardContent::ScreenInfo { .. }
+                | ClipboardContent::MouseShareOffer { .. }
+                | ClipboardContent::MouseShareAccept { .. }
+                | ClipboardContent::MouseMove { .. }
+                | ClipboardContent::MouseButton { .. }
+                | ClipboardContent::MouseScroll { .. }
+                | ClipboardContent::KeyEvent { .. }
+                | ClipboardContent::MouseReturn => {
+                    let _ = mouse_inbound_tx.send(message);
+                }
+                ClipboardContent::DragTransfer { .. } => {
+                    // Drag-transferred files → file handler (reuse file sync path)
+                    let _ = file_inbound_tx.send(message);
+                }
                 _ => {
                     let _ = clipboard_rx_tx.send(message);
                 }
@@ -1054,10 +1172,19 @@ async fn run_client(
         monitor_handle.abort();
     });
 
-    if let Some((sh, bh)) = file_handle {
-        tokio::try_join!(connection_handle, router_handle, clipboard_handle, p2p_listener_handle, sh, bh)?;
-    } else {
-        tokio::try_join!(connection_handle, router_handle, clipboard_handle, p2p_listener_handle)?;
+    match (file_handle, mouse_handle) {
+        (Some((sh, bh)), Some(mh)) => {
+            tokio::try_join!(connection_handle, router_handle, clipboard_handle, p2p_listener_handle, sh, bh, mh)?;
+        }
+        (Some((sh, bh)), None) => {
+            tokio::try_join!(connection_handle, router_handle, clipboard_handle, p2p_listener_handle, sh, bh)?;
+        }
+        (None, Some(mh)) => {
+            tokio::try_join!(connection_handle, router_handle, clipboard_handle, p2p_listener_handle, mh)?;
+        }
+        (None, None) => {
+            tokio::try_join!(connection_handle, router_handle, clipboard_handle, p2p_listener_handle)?;
+        }
     }
 
     Ok(())
