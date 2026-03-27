@@ -857,8 +857,13 @@ async fn run_client(
                         });
                     }
                 }
-                ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } => {
+                ClipboardContent::File { .. } => {
+                    // Directory sync files → file sync task
                     let _ = file_inbound_tx.send(message);
+                }
+                ClipboardContent::FileCopy { .. } => {
+                    // Clipboard file copy (Ctrl+C) → clipboard handler
+                    let _ = clipboard_rx_tx.send(message);
                 }
                 _ => {
                     let _ = clipboard_rx_tx.send(message);
