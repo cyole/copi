@@ -23,6 +23,8 @@ A cross-platform clipboard synchronization tool for Linux and macOS, written in 
 - 🛡️ Server secret gate — prevents unauthorized access to internet-facing servers
 - 🚫 Rate limiting — 10 failed auth attempts per IP per 10 minutes, then auto-blocked
 - 🔐 TLS encryption (auto-generated self-signed certs or bring your own)
+- 🏠 P2P LAN mode — automatic direct connection between clients on the same network
+- 📡 LAN discovery fallback — UDP broadcast finds peers when server is unreachable
 - 🐳 Docker support for headless relay servers
 
 ## System Requirements
@@ -276,20 +278,54 @@ The `--max-file-size` flag controls the maximum size for clipboard file transfer
 
 ## How It Works
 
-1. **Server Side**:
-   - Listens on a specified port for client connections
-   - Monitors local clipboard changes
-   - Receives clipboard content from clients
+### Connection Modes
 
-2. **Client Side**:
-   - Connects to the server
-   - Monitors local clipboard changes and sends them to the server
-   - Receives clipboard content pushed by the server
-   - Automatically updates the local clipboard
+Copi uses a hybrid architecture — clients connect to a central relay server but automatically establish direct P2P connections when possible:
 
-3. **Deduplication Mechanism**:
-   - Uses SHA-256 hash values to track clipboard content
-   - Avoids redundant synchronization of identical content
+```
+┌──────────────────────────────────────────────┐
+│                 Internet Server               │
+│            (relay, multi-group, TLS)          │
+└──────────┬───────────────────┬───────────────┘
+           │                   │
+     ┌─────┴─────┐       ┌────┴────┐
+     │ Client A  │◄─P2P─►│Client B │   (same LAN)
+     │  Linux    │  direct│  macOS  │
+     └───────────┘       └─────────┘
+                               │
+                         ┌─────┴─────┐
+                         │ Client C  │   (remote)
+                         │  laptop   │
+                         └───────────┘
+```
+
+**Server mode (always active):**
+- Clients connect to the relay server via TLS
+- Server broadcasts clipboard changes to all clients in the same group
+- Works across any network — home, office, mobile
+
+**P2P mode (automatic when possible):**
+- Server detects clients with the same public IP (behind same NAT)
+- Sends `PeerDiscovery` with each peer's local LAN IP and listen port
+- Clients connect directly over LAN (TCP on `--listen` port, default 9528)
+- Lower latency, no server bandwidth used, no file size limits
+
+**LAN discovery fallback (when server is down):**
+- After 2 failed server connection attempts, clients broadcast UDP discovery packets on port 9529
+- Other clients with matching token respond and establish direct P2P connections
+- Server retry slows to every 30 seconds (server is source of truth when available)
+- When server comes back, clients reconnect and resume normal mode
+
+**Message deduplication:**
+- When both P2P and server are active, the same message may arrive via both paths
+- Router deduplicates by `(client_id, timestamp)` — second arrival is silently dropped
+
+### Data Flow
+
+1. Client monitors local clipboard every 500ms (SHA-256 dedup prevents re-sending unchanged content)
+2. On change, content is sent to **all active connections** (server + P2P peers)
+3. Other clients receive and update their local clipboard
+4. Files copied via Ctrl+C/Cmd+C are read, encoded, sent, and written to temp dir on the receiving end — Ctrl+V pastes natively
 
 ## Performance
 
@@ -334,11 +370,13 @@ The client polls the clipboard every 500ms but only transfers data when content 
 
 ```
 src/
-├── main.rs                 # Main program entry and CLI handling
+├── main.rs                 # CLI, connection loop, P2P listener, message routing
 └── modules/
     ├── mod.rs             # Module declarations
-    ├── clipboard.rs       # Clipboard monitoring module
-    ├── sync.rs            # Network synchronization module
+    ├── clipboard.rs       # Clipboard monitoring (arboard/wl-clipboard/xclip/osascript)
+    ├── discovery.rs       # UDP LAN peer discovery (fallback when server is down)
+    ├── files.rs           # Directory sync file monitoring
+    ├── sync.rs            # TCP protocol, server, client, auth, P2P peer tracking
     └── tls.rs             # TLS configuration and certificate handling
 ```
 
