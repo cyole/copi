@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
@@ -15,6 +15,16 @@ use tokio_rustls::TlsAcceptor;
 use super::tls::{DynRead, DynWrite};
 
 type HmacSha256 = Hmac<Sha256>;
+
+/// Enable TCP keepalive on a socket to detect dead connections.
+/// Sends a probe after 30s idle, then every 10s, gives up after 3 failed probes.
+fn set_tcp_keepalive(stream: &TcpStream) {
+    let sock_ref = socket2::SockRef::from(stream);
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(Duration::from_secs(30))
+        .with_interval(Duration::from_secs(10));
+    let _ = sock_ref.set_tcp_keepalive(&keepalive);
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClipboardContent {
@@ -482,6 +492,8 @@ impl SyncServer {
         client_ip: IpAddr,
         rate_limiter: RateLimiter,
     ) -> Result<()> {
+        set_tcp_keepalive(&socket);
+
         // Optionally upgrade to TLS
         let (mut reader, mut writer): (DynRead, DynWrite) = if let Some(acceptor) = tls_acceptor {
             let tls_stream = acceptor
@@ -622,6 +634,7 @@ impl SyncClient {
         mut rx: broadcast::Receiver<ClipboardContent>,
     ) -> Result<()> {
         let stream = TcpStream::connect(self.addr).await?;
+        set_tcp_keepalive(&stream);
         println!("Connected to server at {}", self.addr);
 
         // Optionally upgrade to TLS
