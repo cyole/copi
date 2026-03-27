@@ -827,11 +827,29 @@ async fn run_client(
     let _listen_port = _listen_addr.port();
     let router_handle = tokio::spawn(async move {
         let mut from_server_rx = from_server_rx;
+        // Deduplication: track recent (client_id, timestamp) to avoid processing
+        // the same message twice when it arrives via both P2P and server relay.
+        let mut seen: std::collections::HashMap<(String, u64), std::time::Instant> =
+            std::collections::HashMap::new();
+
         while let Some(message) = from_server_rx.recv().await {
             // Skip our own messages
             if message.client_id.as_ref() == Some(&client_id_for_router) {
                 continue;
             }
+
+            // Deduplicate messages arriving via both P2P and server
+            let key = (
+                message.client_id.clone().unwrap_or_default(),
+                message.timestamp,
+            );
+            let now = std::time::Instant::now();
+            seen.retain(|_, t| now.duration_since(*t).as_secs() < 5);
+            if seen.contains_key(&key) {
+                continue;
+            }
+            seen.insert(key, now);
+
             match &message.content {
                 ClipboardContent::PeerDiscovery { peers } => {
                     // Start P2P connections to discovered LAN peers
