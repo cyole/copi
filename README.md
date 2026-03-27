@@ -317,6 +317,50 @@ Then connect clients:
 copi client --server YOUR_SERVER_IP:9527 --token my-secret-token --tls-skip-verify
 ```
 
+### Arch Linux (systemd user service)
+
+Install the binary and set up a service that starts at login:
+
+```bash
+# Build and install
+cargo build --release
+mkdir -p ~/.local/bin
+cp target/release/copi ~/.local/bin/
+```
+
+Create `~/.config/systemd/user/copi.service`:
+
+```ini
+[Unit]
+Description=Copi - Clipboard Sync Client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=COPI_TOKEN=your-secret-token
+ExecStart=%h/.local/bin/copi client --server your-server.example.com --tls-skip-verify
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+Enable and start:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable copi.service
+systemctl --user start copi.service
+
+# Check status
+systemctl --user status copi.service
+
+# View logs
+journalctl --user -u copi.service -f
+```
+
 ## Security Considerations
 
 - **Token authentication** uses HMAC-SHA256 challenge-response — the token is never transmitted over the network, preventing eavesdropping and replay attacks

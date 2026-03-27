@@ -54,8 +54,9 @@ enum Commands {
         max_file_size: u64,
     },
     Client {
+        /// Server address (hostname or IP, port defaults to 9527)
         #[arg(short, long)]
-        server: SocketAddr,
+        server: String,
 
         #[arg(short, long, default_value = "0.0.0.0:9528")]
         listen: SocketAddr,
@@ -416,8 +417,30 @@ async fn run_server(
     Ok(())
 }
 
+async fn resolve_server(server: &str) -> Result<SocketAddr> {
+    use tokio::net::lookup_host;
+
+    // If it already parses as SocketAddr, use it directly
+    if let Ok(addr) = server.parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+
+    // If it has a colon, treat as host:port
+    let host_port = if server.contains(':') {
+        server.to_string()
+    } else {
+        // Default to port 9527
+        format!("{}:9527", server)
+    };
+
+    let mut addrs = lookup_host(&host_port).await?;
+    addrs
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Could not resolve server address: {}", server))
+}
+
 async fn run_client(
-    server_addr: SocketAddr,
+    server_str: String,
     _listen_addr: SocketAddr,
     token: Option<String>,
     tls_enabled: bool,
@@ -428,7 +451,9 @@ async fn run_client(
 ) -> Result<()> {
     println!("Starting clipboard sync client...");
     println!("Platform: {}", std::env::consts::OS);
-    println!("Connecting to server: {}", server_addr);
+
+    let server_addr = resolve_server(&server_str).await?;
+    println!("Connecting to server: {} ({})", server_str, server_addr);
 
     if let Some(ref dir) = sync_dir {
         println!(
@@ -441,7 +466,7 @@ async fn run_client(
     // Build TLS connector if configured
     let (tls_connector, tls_server_name) = if tls_enabled || ca_cert.is_some() || tls_skip_verify {
         let connector = tls::build_client_tls(ca_cert.as_deref(), tls_skip_verify)?;
-        let server_name = tls::parse_server_name(&server_addr.to_string())?;
+        let server_name = tls::parse_server_name(&server_str)?;
         println!("TLS encryption enabled");
         (Some(connector), Some(server_name))
     } else {
