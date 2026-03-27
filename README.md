@@ -31,30 +31,34 @@ A cross-platform clipboard synchronization tool for Linux and macOS, written in 
 
 ### Linux System Dependencies
 
-On Linux, you need to install clipboard support for either X11 or Wayland:
-
-**For X11:**
+**Build dependencies (X11 libs):**
 ```bash
 # Ubuntu/Debian
 sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
 
 # Fedora
 sudo dnf install libxcb-devel
-```
-
-**For Wayland (Recommended):**
-```bash
-# Ubuntu/Debian
-sudo apt install wl-clipboard
-
-# Fedora
-sudo dnf install wl-clipboard
 
 # Arch Linux
-sudo pacman -S wl-clipboard
+sudo pacman -S libxcb
 ```
 
-The program automatically detects the running environment (X11 or Wayland) and uses the appropriate clipboard backend.
+**Runtime dependencies:**
+
+| Package | Required for | Install |
+|---|---|---|
+| `xclip` | File copy/paste on GNOME Wayland | `sudo pacman -S xclip` / `sudo apt install xclip` |
+| `wl-clipboard` | Clipboard on non-GNOME Wayland (Sway, Hyprland) | `sudo pacman -S wl-clipboard` / `sudo apt install wl-clipboard` |
+
+**Clipboard backend selection (automatic):**
+
+| Desktop | Backend | Text/Image | File copy/paste |
+|---|---|---|---|
+| GNOME (Wayland) | arboard + xclip | arboard (native, no flicker) | xclip via XWayland |
+| Sway, Hyprland, etc. | wl-clipboard | wl-paste / wl-copy | wl-paste / wl-copy |
+| macOS | arboard + osascript | arboard (native) | osascript (Finder integration) |
+
+On GNOME, `wl-clipboard` is intentionally avoided because it creates popup windows that steal focus and cause dashboard flickering (GNOME lacks the data-control protocol). Instead, arboard accesses the Wayland clipboard natively, and xclip handles file URIs through XWayland.
 
 ## Installation
 
@@ -226,12 +230,15 @@ Subdirectories are synced recursively. Files are scanned every second and only t
 
 Copy files with Ctrl+C (or Cmd+C) on one machine, paste with Ctrl+V (or Cmd+V) on another — completely transparent. No sync folders needed. Works cross-platform between Linux and macOS.
 
-- **Linux (Wayland)**: Detects `text/uri-list` clipboard from file managers (Nautilus, Dolphin, Thunar, etc.)
-- **macOS**: Detects file references from Finder via `osascript`
+| Platform | Detection | Paste |
+|---|---|---|
+| **GNOME (Wayland)** | `xclip` reads `text/uri-list` via XWayland | `xclip` sets `text/uri-list` |
+| **Sway, Hyprland** | `wl-paste --list-types` / `wl-paste --type text/uri-list` | `wl-copy --type text/uri-list` |
+| **macOS** | `osascript clipboard info` for `«class furl»` | `osascript set the clipboard to POSIX file` |
 
-When you copy a file, copi reads its content, sends it over the network, writes it to a temp directory on the other machine, and sets the clipboard so paste works natively.
+When you copy a file, copi reads its content, sends it over the network, writes it to a temp directory on the other machine, and sets the clipboard so paste works natively in any file manager (Nautilus, Finder, Dolphin, etc.).
 
-The `--max-file-size` flag controls the maximum size for clipboard file transfers (default 10 MB).
+The `--max-file-size` flag controls the maximum size for clipboard file transfers (default 10 MB). Requires `xclip` on GNOME or `wl-clipboard` on other Wayland compositors.
 
 ### Supported Content
 

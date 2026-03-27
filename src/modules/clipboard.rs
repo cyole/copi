@@ -145,9 +145,13 @@ impl ClipboardMonitor {
     pub fn get_clipboard_content(&mut self) -> Result<Option<ClipboardContent>> {
         let content_result: Result<ClipboardContent> = match self.backend {
             ClipboardBackend::Arboard => {
-                // On macOS, check for file URIs first (Cmd+C on files in Finder)
+                // Check for file URIs first (Ctrl+C / Cmd+C on files)
                 #[cfg(target_os = "macos")]
                 if let Some(files) = self.macos_paste_files() {
+                    return self.dedup(ClipboardContent::FileCopy { files });
+                }
+                #[cfg(target_os = "linux")]
+                if let Some(files) = self.xclip_paste_files() {
                     return self.dedup(ClipboardContent::FileCopy { files });
                 }
 
@@ -555,16 +559,9 @@ impl ClipboardMonitor {
                     {
                         Self::macos_copy_files(&paths)?;
                     }
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(target_os = "linux")]
                     {
-                        let clipboard = self
-                            .clipboard
-                            .as_mut()
-                            .ok_or_else(|| anyhow::anyhow!("Clipboard not initialized"))?;
-                        let text = paths.join("\n");
-                        clipboard.set_text(&text).map_err(|e| {
-                            anyhow::anyhow!("Failed to set clipboard: {}", e)
-                        })?;
+                        Self::xclip_copy_file_uris(&paths)?;
                     }
                 }
                 #[cfg(target_os = "linux")]
@@ -824,6 +821,107 @@ return output
             anyhow::bail!("osascript failed to set clipboard files: {}", err);
         }
 
+        Ok(())
+    }
+
+    /// Detect files on clipboard via xclip (XWayland) on GNOME.
+    /// xclip talks to X11 clipboard which shares with Wayland — no popup windows.
+    #[cfg(target_os = "linux")]
+    fn xclip_paste_files(&self) -> Option<Vec<CopiedFile>> {
+        use std::process::Stdio;
+
+        // Check available MIME types via xclip
+        let output = Command::new("timeout")
+            .arg("2")
+            .arg("xclip")
+            .args(["-selection", "clipboard", "-t", "TARGETS", "-o"])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let targets = String::from_utf8_lossy(&output.stdout);
+        if !targets.lines().any(|t| t.trim() == "text/uri-list") {
+            return None;
+        }
+
+        // Read file URIs
+        let output = Command::new("timeout")
+            .arg("2")
+            .arg("xclip")
+            .args(["-selection", "clipboard", "-t", "text/uri-list", "-o"])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let uri_text = String::from_utf8_lossy(&output.stdout);
+        let mut files = Vec::new();
+
+        for line in uri_text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let path = if let Some(p) = line.strip_prefix("file://") {
+                percent_decode(p)
+            } else {
+                continue;
+            };
+
+            let p = std::path::Path::new(&path);
+            if !p.is_file() {
+                continue;
+            }
+
+            let metadata = std::fs::metadata(p).ok()?;
+            let size = metadata.len();
+            if size > self.max_file_size {
+                eprintln!("Skipping clipboard file {} ({} bytes, max {})", p.display(), size, self.max_file_size);
+                continue;
+            }
+
+            let data = std::fs::read(p).ok()?;
+            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+            files.push(CopiedFile { name, data: encoded, size });
+        }
+
+        if files.is_empty() { None } else { Some(files) }
+    }
+
+    /// Set clipboard to file URIs via xclip (XWayland) for Ctrl+V in file managers.
+    #[cfg(target_os = "linux")]
+    fn xclip_copy_file_uris(paths: &[String]) -> Result<()> {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        let uri_list: String = paths
+            .iter()
+            .map(|p| format!("file://{}", p))
+            .collect::<Vec<_>>()
+            .join("\r\n");
+
+        let mut child = Command::new("xclip")
+            .args(["-selection", "clipboard", "-t", "text/uri-list", "-i"])
+            .stdin(Stdio::piped())
+            .spawn()?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(uri_list.as_bytes())?;
+            stdin.write_all(b"\r\n")?;
+        }
+
+        let status = child.wait()?;
+        if !status.success() {
+            anyhow::bail!("xclip set file URIs failed");
+        }
         Ok(())
     }
 
