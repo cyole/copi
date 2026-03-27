@@ -1,7 +1,9 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::{broadcast, mpsc};
 
+use super::drag;
 use super::screen::{ScreenConfig, ScreenEdge};
 use super::sync::{ClipboardContent, ClipboardMessage};
 
@@ -17,6 +19,19 @@ enum MouseState {
     },
     /// A remote peer is controlling our cursor.
     Controlled {
+        peer_id: String,
+        entry_edge: ScreenEdge,
+    },
+    /// We are the sender: a drag-across is in progress.
+    /// Mouse events are buffered until DragReady arrives, then forwarded.
+    DragSending {
+        peer_id: String,
+        exit_edge: ScreenEdge,
+        ready: bool,
+    },
+    /// We are the receiver: a drag session is active locally via overlay window.
+    /// Mouse events continue to be simulated (they drive the local drag loop).
+    DragReceiving {
         peer_id: String,
         entry_edge: ScreenEdge,
     },
@@ -58,6 +73,8 @@ struct SharedMouseState {
     button_held: bool,
     /// Last time we sent a MouseMove (for rate limiting).
     last_move_sent: Instant,
+    /// Buffer for mouse events while waiting for DragReady from receiver.
+    drag_buffer: VecDeque<ClipboardContent>,
 }
 
 /// Spawn the mouse sharing system.
@@ -92,6 +109,7 @@ pub fn spawn_mouse_sharing(
             mouse_y: 0.0,
             button_held: false,
             last_move_sent: Instant::now(),
+            drag_buffer: VecDeque::with_capacity(256),
         }));
 
         // Channel from grab thread to async bridge
@@ -238,6 +256,89 @@ fn handle_inbound_mouse_message(
             }
         }
 
+        ClipboardContent::DragBegin { files, entry_edge, entry_x, entry_y } => {
+            println!(
+                "Mouse: received DragBegin ({} file(s), entry: {} at ({:.2}, {:.2}))",
+                files.len(), entry_edge, entry_x, entry_y
+            );
+            let mut s = shared.lock().unwrap();
+            let (abs_x, abs_y) = s.screen.denormalize(*entry_x, *entry_y);
+            s.state = MouseState::DragReceiving {
+                peer_id: "remote".to_string(),
+                entry_edge: *entry_edge,
+            };
+            drop(s);
+
+            // Start the overlay drag session on a dedicated thread
+            let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+            let files_clone = files.clone();
+            let to_server = to_server_tx.clone();
+            // Spawn a blocking task to await ready signal and send DragReady
+            tokio::spawn(async move {
+                match drag::start_drag_session(files_clone, abs_x, abs_y, ready_tx) {
+                    Ok(_session) => {
+                        // Wait for the overlay to be ready
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(2),
+                            ready_rx,
+                        ).await {
+                            Ok(Ok(())) => {
+                                println!("Mouse: overlay drag ready, sending DragReady");
+                                let _ = to_server.send(ClipboardContent::DragReady);
+                            }
+                            _ => {
+                                eprintln!("Mouse: overlay drag failed to start, sending DragCancel");
+                                let _ = to_server.send(ClipboardContent::DragCancel);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Mouse: failed to start drag session: {}", e);
+                        let _ = to_server.send(ClipboardContent::DragCancel);
+                    }
+                }
+            });
+        }
+
+        ClipboardContent::DragReady => {
+            let mut s = shared.lock().unwrap();
+            if let MouseState::DragSending { ref peer_id, exit_edge, ready: false } = s.state {
+                println!("Mouse: DragReady received, flushing {} buffered events", s.drag_buffer.len());
+                s.state = MouseState::DragSending {
+                    peer_id: peer_id.clone(),
+                    exit_edge,
+                    ready: true,
+                };
+                // Flush buffered events
+                let buffered: Vec<_> = s.drag_buffer.drain(..).collect();
+                drop(s);
+                for msg in buffered {
+                    let _ = to_server_tx.send(msg);
+                }
+            }
+        }
+
+        ClipboardContent::DragCancel => {
+            let mut s = shared.lock().unwrap();
+            match s.state {
+                MouseState::DragSending { .. } => {
+                    println!("Mouse: drag cancelled by receiver");
+                    s.state = MouseState::Local;
+                    s.drag_buffer.clear();
+                }
+                MouseState::DragReceiving { .. } => {
+                    println!("Mouse: drag cancelled by sender");
+                    // Simulate Escape to cancel any active local drag
+                    drop(s);
+                    super::input::simulate_key("Escape", true);
+                    super::input::simulate_key("Escape", false);
+                    let mut s = shared.lock().unwrap();
+                    s.state = MouseState::Local;
+                }
+                _ => {}
+            }
+        }
+
         _ => {}
     }
 }
@@ -266,23 +367,43 @@ fn run_grab_loop(
                         if let Some((edge, peer_id)) = s.screen.edge_hit(x, y) {
                             let peer_id = peer_id.to_string();
                             if peer_id != "pending" {
+                                let (nx, ny) = s.screen.normalize(x, y);
+                                let (entry_x, entry_y) =
+                                    ScreenConfig::entry_position(edge, nx, ny);
+
+                                // If button is held, try to detect dragged files
+                                if s.button_held {
+                                    if let Some(files) = drag::read_dragged_files() {
+                                        if !files.is_empty() {
+                                            s.state = MouseState::DragSending {
+                                                peer_id: peer_id.clone(),
+                                                exit_edge: edge,
+                                                ready: false,
+                                            };
+                                            s.drag_buffer.clear();
+                                            println!("Mouse: drag detected at {} edge → sending {} file(s) to peer", edge, files.len());
+                                            let _ = tx.send(ClipboardContent::DragBegin {
+                                                files,
+                                                entry_edge: edge.mirror(),
+                                                entry_x,
+                                                entry_y,
+                                            });
+                                            return None;
+                                        }
+                                    }
+                                }
+
+                                // No drag — normal cursor sharing
                                 s.state = MouseState::Remote {
                                     peer_id: peer_id.clone(),
                                     exit_edge: edge,
                                 };
                                 println!("Mouse: cursor crossed {} edge → remote peer", edge);
-
-                                // Send the entry position on the remote screen
-                                let (nx, ny) = s.screen.normalize(x, y);
-                                let (entry_x, entry_y) =
-                                    ScreenConfig::entry_position(edge, nx, ny);
                                 let _ = tx.send(ClipboardContent::MouseMove {
                                     x: entry_x,
                                     y: entry_y,
                                 });
                                 s.last_move_sent = Instant::now();
-
-                                // Consume the event (don't let cursor pass the edge locally)
                                 return None;
                             }
                         }
@@ -300,7 +421,24 @@ fn run_grab_loop(
                         // Consume — cursor stays locked at edge
                         None
                     }
-                    MouseState::Controlled { .. } => {
+                    MouseState::DragSending { ready, .. } => {
+                        let now = Instant::now();
+                        if now.duration_since(s.last_move_sent) >= min_move_interval {
+                            let (nx, ny) = s.screen.normalize(x, y);
+                            let msg = ClipboardContent::MouseMove { x: nx, y: ny };
+                            if ready {
+                                let _ = tx.send(msg);
+                            } else {
+                                // Buffer until DragReady arrives
+                                if s.drag_buffer.len() < 256 {
+                                    s.drag_buffer.push_back(msg);
+                                }
+                            }
+                            s.last_move_sent = now;
+                        }
+                        None
+                    }
+                    MouseState::Controlled { .. } | MouseState::DragReceiving { .. } => {
                         // We're being controlled — pass through (simulated events)
                         Some(event)
                     }
@@ -310,11 +448,21 @@ fn run_grab_loop(
             rdev::EventType::ButtonPress(button) => {
                 s.button_held = true;
                 match s.state {
-                    MouseState::Remote { .. } => {
+                    MouseState::Remote { .. } | MouseState::DragSending { ready: true, .. } => {
                         let _ = tx.send(ClipboardContent::MouseButton {
                             button: button_to_u8(&button),
                             pressed: true,
                         });
+                        None
+                    }
+                    MouseState::DragSending { ready: false, .. } => {
+                        let msg = ClipboardContent::MouseButton {
+                            button: button_to_u8(&button),
+                            pressed: true,
+                        };
+                        if s.drag_buffer.len() < 256 {
+                            s.drag_buffer.push_back(msg);
+                        }
                         None
                     }
                     _ => Some(event),
@@ -323,12 +471,31 @@ fn run_grab_loop(
 
             rdev::EventType::ButtonRelease(button) => {
                 s.button_held = false;
-                match s.state {
+                match s.state.clone() {
                     MouseState::Remote { .. } => {
                         let _ = tx.send(ClipboardContent::MouseButton {
                             button: button_to_u8(&button),
                             pressed: false,
                         });
+                        None
+                    }
+                    MouseState::DragSending { ready: true, .. } => {
+                        // Forward release — triggers drop on receiver
+                        let _ = tx.send(ClipboardContent::MouseButton {
+                            button: button_to_u8(&button),
+                            pressed: false,
+                        });
+                        println!("Mouse: drag completed (button released)");
+                        s.state = MouseState::Local;
+                        s.drag_buffer.clear();
+                        None
+                    }
+                    MouseState::DragSending { ready: false, .. } => {
+                        // Released before receiver was ready — cancel
+                        let _ = tx.send(ClipboardContent::DragCancel);
+                        println!("Mouse: drag cancelled (released before DragReady)");
+                        s.state = MouseState::Local;
+                        s.drag_buffer.clear();
                         None
                     }
                     _ => Some(event),
@@ -337,39 +504,42 @@ fn run_grab_loop(
 
             rdev::EventType::Wheel { delta_x, delta_y } => {
                 match s.state {
-                    MouseState::Remote { .. } => {
+                    MouseState::Remote { .. } | MouseState::DragSending { ready: true, .. } => {
                         let _ = tx.send(ClipboardContent::MouseScroll {
                             delta_x: delta_x as i32,
                             delta_y: delta_y as i32,
                         });
                         None
                     }
+                    MouseState::DragSending { ready: false, .. } => None, // drop scroll during buffer
                     _ => Some(event),
                 }
             }
 
             rdev::EventType::KeyPress(key) => {
                 match s.state {
-                    MouseState::Remote { .. } => {
+                    MouseState::Remote { .. } | MouseState::DragSending { ready: true, .. } => {
                         let _ = tx.send(ClipboardContent::KeyEvent {
                             key: key_to_string(&key),
                             pressed: true,
                         });
                         None
                     }
+                    MouseState::DragSending { ready: false, .. } => None,
                     _ => Some(event),
                 }
             }
 
             rdev::EventType::KeyRelease(key) => {
                 match s.state {
-                    MouseState::Remote { .. } => {
+                    MouseState::Remote { .. } | MouseState::DragSending { ready: true, .. } => {
                         let _ = tx.send(ClipboardContent::KeyEvent {
                             key: key_to_string(&key),
                             pressed: false,
                         });
                         None
                     }
+                    MouseState::DragSending { ready: false, .. } => None,
                     _ => Some(event),
                 }
             }

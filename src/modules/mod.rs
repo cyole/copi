@@ -1,5 +1,6 @@
 pub mod clipboard;
 pub mod discovery;
+pub mod drag;
 pub mod files;
 pub mod input;
 pub mod mouse;

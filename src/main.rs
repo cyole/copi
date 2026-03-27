@@ -243,6 +243,18 @@ fn log_content(prefix: &str, content: &ClipboardContent) {
             println!("{}: drag transfer {} file(s) [{}] ({} bytes, entry: {})",
                 prefix, files.len(), names.join(", "), total, entry_edge);
         }
+        ClipboardContent::DragBegin { files, entry_edge, entry_x, entry_y } => {
+            let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+            let total: u64 = files.iter().map(|f| f.size).sum();
+            println!("{}: drag begin {} file(s) [{}] ({} bytes, entry: {} at ({:.2}, {:.2}))",
+                prefix, files.len(), names.join(", "), total, entry_edge, entry_x, entry_y);
+        }
+        ClipboardContent::DragReady => {
+            println!("{}: drag ready (overlay active)", prefix);
+        }
+        ClipboardContent::DragCancel => {
+            println!("{}: drag cancelled", prefix);
+        }
     }
 }
 
@@ -1101,7 +1113,7 @@ async fn run_client(
                     // Clipboard file copy (Ctrl+C) → clipboard handler
                     let _ = clipboard_rx_tx.send(message);
                 }
-                // Mouse sharing messages → mouse input channel
+                // Mouse sharing + drag relay messages → mouse input channel
                 ClipboardContent::ScreenInfo { .. }
                 | ClipboardContent::MouseShareOffer { .. }
                 | ClipboardContent::MouseShareAccept { .. }
@@ -1109,7 +1121,10 @@ async fn run_client(
                 | ClipboardContent::MouseButton { .. }
                 | ClipboardContent::MouseScroll { .. }
                 | ClipboardContent::KeyEvent { .. }
-                | ClipboardContent::MouseReturn => {
+                | ClipboardContent::MouseReturn
+                | ClipboardContent::DragBegin { .. }
+                | ClipboardContent::DragReady
+                | ClipboardContent::DragCancel => {
                     let _ = mouse_inbound_tx.send(message);
                 }
                 ClipboardContent::DragTransfer { .. } => {

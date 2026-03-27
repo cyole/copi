@@ -110,12 +110,31 @@ pub enum ClipboardContent {
     /// Cursor has returned to the originating machine.
     MouseReturn,
 
-    /// File drag detected at screen edge — initiates transfer to peer.
+    /// Legacy: simple file transfer at screen edge (write to sync dir).
+    /// Kept for backward compatibility — new clients use DragBegin/DragReady flow.
     DragTransfer {
         files: Vec<CopiedFile>,
         /// The edge from which files enter the receiving screen (mirrored from exit).
         entry_edge: ScreenEdge,
     },
+
+    /// Continuous drag-across: files being dragged across screen edge.
+    /// Receiver creates overlay window and starts a local drag session.
+    DragBegin {
+        files: Vec<CopiedFile>,
+        entry_edge: ScreenEdge,
+        /// Normalized cursor position where drag enters the receiving screen.
+        entry_x: f64,
+        entry_y: f64,
+    },
+
+    /// Receiver confirms overlay window created and local drag session active.
+    /// Sender resumes forwarding mouse events after receiving this.
+    DragReady,
+
+    /// Drag cancelled (Escape, button released before ready, disconnect).
+    /// Receiver should cancel its local drag session and destroy the overlay.
+    DragCancel,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
