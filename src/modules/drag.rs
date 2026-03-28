@@ -306,6 +306,7 @@ app.run([])
 
     // Signal ready once subprocess is initialized
     let mut ready_sent = false;
+    let mut ready_tx = Some(ready_tx);
     let cancel_rx = cancel_rx;
 
     // Read subprocess output in a separate thread
@@ -334,7 +335,9 @@ app.run([])
                 match line.trim() {
                     "READY" => {
                         if !ready_sent {
-                            let _ = ready_tx.send(());
+                            if let Some(tx) = ready_tx.take() {
+                                let _ = tx.send(());
+                            }
                             ready_sent = true;
                             println!("Drag: GTK4 overlay ready");
                         }
@@ -357,8 +360,8 @@ app.run([])
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 // Subprocess exited
-                if !ready_sent {
-                    let _ = ready_tx.send(());
+                if let Some(tx) = ready_tx.take() {
+                    let _ = tx.send(());
                 }
                 break;
             }
@@ -367,8 +370,8 @@ app.run([])
         // Check if child exited
         match child.try_wait() {
             Ok(Some(_)) => {
-                if !ready_sent {
-                    let _ = ready_tx.send(());
+                if let Some(tx) = ready_tx.take() {
+                    let _ = tx.send(());
                 }
                 break;
             }
@@ -750,6 +753,7 @@ fn wait_for_subprocess_drag(
     });
 
     let mut ready_sent = false;
+    let mut ready_tx = Some(ready_tx);
     let mut result = DragResult::Cancelled;
 
     // Read lines in a separate thread to avoid blocking
@@ -774,7 +778,9 @@ fn wait_for_subprocess_drag(
             Ok(line) => match line.trim() {
                 "READY" => {
                     if !ready_sent {
-                        let _ = ready_tx.send(());
+                        if let Some(tx) = ready_tx.take() {
+                            let _ = tx.send(());
+                        }
                         ready_sent = true;
                         println!("Drag: overlay ready");
                     }
@@ -795,8 +801,8 @@ fn wait_for_subprocess_drag(
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                if !ready_sent {
-                    let _ = ready_tx.send(());
+                if let Some(tx) = ready_tx.take() {
+                    let _ = tx.send(());
                 }
                 break;
             }
@@ -804,8 +810,8 @@ fn wait_for_subprocess_drag(
 
         // Check if child exited
         if let Ok(Some(_)) = child.try_wait() {
-            if !ready_sent {
-                let _ = ready_tx.send(());
+            if let Some(tx) = ready_tx.take() {
+                let _ = tx.send(());
             }
             break;
         }

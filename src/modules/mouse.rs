@@ -58,7 +58,7 @@ fn u8_to_button(b: u8) -> rdev::Button {
         0 => rdev::Button::Left,
         1 => rdev::Button::Right,
         2 => rdev::Button::Middle,
-        n => rdev::Button::Unknown(n as u16),
+        n => rdev::Button::Unknown(n),
     }
 }
 

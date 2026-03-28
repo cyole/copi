@@ -428,6 +428,7 @@ async fn client_auth_handshake(
         listen_port,
         local_ip: get_local_ip().unwrap_or_default(),
         client_id: client_id.to_string(),
+        channel_type: "clipboard".to_string(),
     };
     write_message(writer, &auth_req)
         .await

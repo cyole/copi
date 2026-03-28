@@ -54,7 +54,7 @@ fn u8_to_button(b: u8) -> rdev::Button {
         0 => rdev::Button::Left,
         1 => rdev::Button::Right,
         2 => rdev::Button::Middle,
-        n => rdev::Button::Unknown(n as u16),
+        n => rdev::Button::Unknown(n),
     }
 }
 
@@ -126,7 +126,7 @@ fn parse_key(name: &str) -> Option<rdev::Key> {
         // Special keys
         "Return" => Some(rdev::Key::Return),
         "Escape" => Some(rdev::Key::Escape),
-        "BackSpace" => Some(rdev::Key::BackSpace),
+        "BackSpace" => Some(rdev::Key::Backspace),
         "Tab" => Some(rdev::Key::Tab),
         "Space" => Some(rdev::Key::Space),
         "CapsLock" => Some(rdev::Key::CapsLock),

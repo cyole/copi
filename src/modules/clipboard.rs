@@ -144,6 +144,10 @@ impl ClipboardMonitor {
                 // Control message, not clipboard content
                 return "peer_discovery".to_string();
             }
+            _ => {
+                // Mouse/drag/screen control messages, not clipboard content
+                return "control_message".to_string();
+            }
         }
         format!("{:x}", hasher.finalize())
     }
@@ -602,6 +606,9 @@ impl ClipboardMonitor {
                     ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } | ClipboardContent::PeerDiscovery { .. } => {
                         return Ok(());
                     }
+                    _ => {
+                        return Ok(());
+                    }
                 }
             }
             #[cfg(target_os = "linux")]
@@ -613,6 +620,9 @@ impl ClipboardMonitor {
                     ClipboardContent::Image { data, .. } => Self::wl_copy_image(data)?,
                     ClipboardContent::Html { html, text: _ } => Self::wl_copy_html(html)?,
                     ClipboardContent::File { .. } | ClipboardContent::FileCopy { .. } | ClipboardContent::PeerDiscovery { .. } => {
+                        return Ok(());
+                    }
+                    _ => {
                         return Ok(());
                     }
                 };
