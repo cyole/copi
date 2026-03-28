@@ -161,6 +161,33 @@ pub fn spawn_mouse_sharing(
             }
         });
 
+        // Drag timeout watchdog: cancel DragSending if no DragReady within 2s
+        let shared_for_timeout = shared.clone();
+        let to_server_for_timeout = to_server_tx.clone();
+        let _timeout_handle = tokio::spawn(async move {
+            let mut drag_start: Option<Instant> = None;
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                let mut s = shared_for_timeout.lock().unwrap();
+                match s.state {
+                    MouseState::DragSending { ready: false, .. } => {
+                        if drag_start.is_none() {
+                            drag_start = Some(Instant::now());
+                        } else if drag_start.unwrap().elapsed() > std::time::Duration::from_secs(2) {
+                            println!("Mouse: DragSending timeout (no DragReady in 2s), cancelling");
+                            let _ = to_server_for_timeout.send(ClipboardContent::DragCancel);
+                            s.state = MouseState::Local;
+                            s.drag_buffer.clear();
+                            drag_start = None;
+                        }
+                    }
+                    _ => {
+                        drag_start = None;
+                    }
+                }
+            }
+        });
+
         tokio::select! {
             _ = bridge_handle => {}
             _ = recv_handle => {}
