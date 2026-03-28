@@ -49,7 +49,7 @@ fn send_event(event: rdev::EventType) {
 }
 
 /// Convert u8 button ID back to rdev::Button.
-fn u8_to_button(b: u8) -> rdev::Button {
+pub fn u8_to_button(b: u8) -> rdev::Button {
     match b {
         0 => rdev::Button::Left,
         1 => rdev::Button::Right,

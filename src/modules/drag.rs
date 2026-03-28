@@ -194,8 +194,8 @@ fn read_dragged_files_linux() -> Option<Vec<CopiedFile>> {
 #[cfg(target_os = "linux")]
 fn run_overlay_drag_linux(
     file_paths: Vec<PathBuf>,
-    screen_x: f64,
-    screen_y: f64,
+    _screen_x: f64,
+    _screen_y: f64,
     ready_tx: tokio::sync::oneshot::Sender<()>,
     cancel_rx: std::sync::mpsc::Receiver<()>,
 ) -> DragResult {
@@ -827,6 +827,12 @@ fn wait_for_subprocess_drag(
 // =============================================================================
 
 fn fallback_open_file_manager(file_paths: &[PathBuf]) -> DragResult {
+    println!("Drag: overlay not available — opening files in file manager instead");
+    #[cfg(target_os = "linux")]
+    println!("Drag: for overlay drag, install python3 and GTK4 (python3-gi + gir1.2-gtk-4.0)");
+    #[cfg(target_os = "macos")]
+    println!("Drag: for overlay drag, ensure Swift CLI is available (Xcode Command Line Tools)");
+
     if let Some(dir) = file_paths.first().and_then(|p| p.parent()) {
         let opener = if cfg!(target_os = "macos") {
             "open"
@@ -835,7 +841,7 @@ fn fallback_open_file_manager(file_paths: &[PathBuf]) -> DragResult {
         } else {
             "xdg-open"
         };
-        println!("Drag: fallback — opening {} in file manager", dir.display());
+        println!("Drag: opening {} in file manager", dir.display());
         let _ = std::process::Command::new(opener)
             .arg(dir)
             .spawn();

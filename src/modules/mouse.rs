@@ -52,16 +52,6 @@ fn button_to_u8(button: &rdev::Button) -> u8 {
     }
 }
 
-/// Convert a u8 back to an rdev::Button.
-fn u8_to_button(b: u8) -> rdev::Button {
-    match b {
-        0 => rdev::Button::Left,
-        1 => rdev::Button::Right,
-        2 => rdev::Button::Middle,
-        n => rdev::Button::Unknown(n),
-    }
-}
-
 /// Shared state between the grab thread and the async runtime.
 struct SharedMouseState {
     state: MouseState,
@@ -129,12 +119,18 @@ pub fn spawn_mouse_sharing(
             });
         }
 
-        // Spawn the OS grab thread
+        // Spawn the OS grab thread with auto-restart on crash
         let shared_for_grab = shared.clone();
         let grab_tx_clone = grab_tx.clone();
         let peer_edge_for_grab = peer_edge;
         std::thread::spawn(move || {
-            run_grab_loop(shared_for_grab, grab_tx_clone, peer_edge_for_grab);
+            loop {
+                let shared = shared_for_grab.clone();
+                let tx = grab_tx_clone.clone();
+                run_grab_loop(shared, tx, peer_edge_for_grab);
+                eprintln!("Mouse sharing: grab loop exited, restarting in 2s...");
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
         });
 
         // Bridge task: forward grab events to the network
