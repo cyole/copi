@@ -51,6 +51,7 @@ final class AppWindowController: ObservableObject {
         window.contentViewController = NSHostingController(rootView: rootView)
         window.isReleasedWhenClosed = false
         window.collectionBehavior = [.managed, .moveToActiveSpace]
+        center(window, on: presentationScreen())
         return window
     }
 
@@ -74,14 +75,12 @@ final class AppWindowController: ObservableObject {
         }
 
         NSApp.activate(ignoringOtherApps: true)
-        center(window)
         window.deminiaturize(nil)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
     }
 
-    private func center(_ window: NSWindow) {
-        let screen = window.screen ?? NSScreen.main
+    private func center(_ window: NSWindow, on screen: NSScreen?) {
         guard let visibleFrame = screen?.visibleFrame else {
             window.center()
             return
@@ -93,5 +92,12 @@ final class AppWindowController: ObservableObject {
             y: visibleFrame.midY - frame.height / 2
         )
         window.setFrameOrigin(origin)
+    }
+
+    private func presentationScreen() -> NSScreen? {
+        let mouseLocation = NSEvent.mouseLocation
+        return NSScreen.screens.first { screen in
+            screen.frame.contains(mouseLocation)
+        } ?? NSScreen.main
     }
 }
