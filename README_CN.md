@@ -85,6 +85,24 @@ copi status [--json]
 copi version
 ```
 
+配置文件入口：
+
+```bash
+copi config init
+copi config show
+copi config path
+```
+
+长运行命令支持结构化日志，给原生壳监听：
+
+```bash
+copi client --log-format json
+copi lan --log-format json
+copi relay --log-format json
+```
+
+CLI 契约见 [docs/CLI_CONTRACT.md](docs/CLI_CONTRACT.md)。
+
 ## 原生客户端方向
 
 Go CLI 核心负责协议、同步、发现和服务端能力；各端原生客户端优先只做原生壳，启动并管理 CLI 进程。原生壳不要解析人类日志，如果需要机器可读信息，使用 `copi status --json`，后续再补更多 JSON 控制命令。

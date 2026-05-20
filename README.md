@@ -85,6 +85,24 @@ copi status [--json]
 copi version
 ```
 
+Config commands:
+
+```bash
+copi config init
+copi config show
+copi config path
+```
+
+Long-running commands support structured logs for native shells:
+
+```bash
+copi client --log-format json
+copi lan --log-format json
+copi relay --log-format json
+```
+
+See [docs/CLI_CONTRACT.md](docs/CLI_CONTRACT.md) for the shell-facing CLI contract.
+
 ## Native Client Direction
 
 The Go CLI core owns protocol, sync, discovery, and server behavior. Native clients should first wrap the CLI instead of reimplementing sync. Use `copi status --json` for machine-readable feature detection; do not parse human logs as an API.

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cyole/copi/internal/clipboard"
+	"github.com/cyole/copi/internal/eventlog"
 	"github.com/cyole/copi/internal/protocol"
 	"github.com/cyole/copi/internal/server"
 )
@@ -31,7 +31,7 @@ type Options struct {
 	DeviceName    string
 	Interval      time.Duration
 	Clipboard     clipboard.Provider
-	Logger        *log.Logger
+	Logger        *eventlog.Logger
 }
 
 type announcement struct {
@@ -63,7 +63,7 @@ func Run(ctx context.Context, opts Options) error {
 		return errors.New("clipboard provider is required")
 	}
 	if opts.Logger == nil {
-		opts.Logger = log.Default()
+		opts.Logger = eventlog.Discard()
 	}
 	if opts.Interval <= 0 {
 		opts.Interval = 500 * time.Millisecond
@@ -80,6 +80,14 @@ func Run(ctx context.Context, opts Options) error {
 			return err
 		}
 	}
+	opts.Logger.Info("started", "LAN sync started", eventlog.Fields{
+		"mode":           "lan",
+		"listen":         opts.ListenAddr,
+		"advertise_url":  advertiseURL,
+		"multicast_addr": opts.MulticastAddr,
+		"device_id":      opts.DeviceID,
+		"device_name":    opts.DeviceName,
+	})
 
 	store := &peerStore{peers: make(map[string]peer)}
 	state := &syncState{}
@@ -92,7 +100,10 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	go func() {
-		opts.Logger.Printf("LAN peer HTTP listening on %s, advertising %s", opts.ListenAddr, advertiseURL)
+		opts.Logger.Info("lan_peer_listening", "LAN peer HTTP listening", eventlog.Fields{
+			"listen":        opts.ListenAddr,
+			"advertise_url": advertiseURL,
+		})
 		err := srv.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
@@ -173,7 +184,11 @@ func lanHandler(opts Options, state *syncState) http.Handler {
 			return
 		}
 		state.mark(hash)
-		opts.Logger.Printf("applied LAN clipboard text from %s (%d bytes)", env.DeviceName, len(env.Payload.Text))
+		opts.Logger.Info("clipboard_applied", "applied LAN clipboard text", eventlog.Fields{
+			"bytes":            len(env.Payload.Text),
+			"from_device_id":   env.DeviceID,
+			"from_device_name": env.DeviceName,
+		})
 		writeJSON(w, env)
 	})
 	return mux
@@ -190,7 +205,9 @@ func watchAndBroadcast(ctx context.Context, opts Options, httpClient *http.Clien
 		case <-ticker.C:
 			text, err := opts.Clipboard.ReadText()
 			if err != nil {
-				opts.Logger.Printf("clipboard read failed: %v", err)
+				opts.Logger.Error("clipboard_read_failed", "clipboard read failed", eventlog.Fields{
+					"error": err.Error(),
+				})
 				continue
 			}
 			if text == "" {
@@ -206,11 +223,19 @@ func watchAndBroadcast(ctx context.Context, opts Options, httpClient *http.Clien
 			peers := store.list()
 			for _, p := range peers {
 				if err := postPeer(ctx, httpClient, opts.Token, p.URL, env); err != nil {
-					opts.Logger.Printf("sync to peer %s failed: %v", p.DeviceName, err)
+					opts.Logger.Error("peer_sync_failed", "sync to peer failed", eventlog.Fields{
+						"error":            err.Error(),
+						"peer_device_id":   p.DeviceID,
+						"peer_device_name": p.DeviceName,
+						"peer_url":         p.URL,
+					})
 				}
 			}
 			if len(peers) > 0 {
-				opts.Logger.Printf("broadcast clipboard text (%d bytes) to %d peer(s)", len(text), len(peers))
+				opts.Logger.Info("clipboard_broadcast", "broadcast clipboard text to LAN peers", eventlog.Fields{
+					"bytes":      len(text),
+					"peer_count": len(peers),
+				})
 			}
 		}
 	}
@@ -289,12 +314,19 @@ func listenLoop(ctx context.Context, opts Options, store *peerStore) error {
 		if ann.DeviceID == "" || ann.DeviceID == opts.DeviceID || ann.URL == "" {
 			continue
 		}
-		store.upsert(peer{
+		p := peer{
 			DeviceID:   ann.DeviceID,
 			DeviceName: ann.DeviceName,
 			URL:        strings.TrimRight(ann.URL, "/"),
 			LastSeen:   time.Now(),
-		})
+		}
+		if store.upsert(p) {
+			opts.Logger.Info("peer_discovered", "LAN peer discovered", eventlog.Fields{
+				"peer_device_id":   p.DeviceID,
+				"peer_device_name": p.DeviceName,
+				"peer_url":         p.URL,
+			})
+		}
 	}
 }
 
@@ -399,10 +431,12 @@ func outboundIP() string {
 	return "127.0.0.1"
 }
 
-func (s *peerStore) upsert(p peer) {
+func (s *peerStore) upsert(p peer) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	_, existed := s.peers[p.DeviceID]
 	s.peers[p.DeviceID] = p
+	return !existed
 }
 
 func (s *peerStore) list() []peer {

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/cyole/copi/internal/client"
 	"github.com/cyole/copi/internal/clipboard"
 	"github.com/cyole/copi/internal/config"
+	"github.com/cyole/copi/internal/eventlog"
 	"github.com/cyole/copi/internal/lan"
 	"github.com/cyole/copi/internal/server"
 )
@@ -27,22 +27,23 @@ func main() {
 		os.Exit(2)
 	}
 
-	logger := log.New(os.Stdout, "", log.LstdFlags)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	var err error
 	switch os.Args[1] {
 	case "server", "relay":
-		err = runRelay(ctx, os.Args[2:], logger)
+		err = runRelay(ctx, os.Args[2:])
 	case "client":
-		err = runClient(ctx, os.Args[2:], logger)
+		err = runClient(ctx, os.Args[2:])
 	case "lan":
-		err = runLAN(ctx, os.Args[2:], logger)
+		err = runLAN(ctx, os.Args[2:])
 	case "version":
 		fmt.Println("copi", version)
 	case "status":
 		err = runStatus(os.Args[2:])
+	case "config":
+		err = runConfig(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -52,20 +53,34 @@ func main() {
 	}
 
 	if err != nil {
-		logger.Printf("error: %v", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func runRelay(ctx context.Context, args []string, logger *log.Logger) error {
+func runRelay(ctx context.Context, args []string) error {
+	cfg, configPath, err := loadConfig(args)
+	if err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
-	addr := fs.String("addr", envOr("COPI_ADDR", "0.0.0.0:9527"), "HTTP listen address")
-	token := fs.String("token", os.Getenv("COPI_TOKEN"), "optional shared token")
+	_ = fs.String("config", configPath, "config file path")
+	addr := fs.String("addr", envOr("COPI_ADDR", cfg.Relay.Addr), "HTTP listen address")
+	token := fs.String("token", envOr("COPI_TOKEN", cfg.Token), "optional shared token")
+	logFormat := fs.String("log-format", envOr("COPI_LOG_FORMAT", cfg.LogFormat), "log format: text or json")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	logger, err := commandLogger(*logFormat)
+	if err != nil {
+		return err
+	}
 
-	logger.Printf("starting third-party HTTP relay on %s; this process does not read or write any clipboard", *addr)
+	logger.Info("relay_starting", "starting third-party HTTP relay", eventlog.Fields{
+		"addr":             *addr,
+		"clipboard_access": false,
+		"config":           configPath,
+	})
 	srv := server.New(server.Options{
 		Addr:   *addr,
 		Token:  *token,
@@ -74,19 +89,38 @@ func runRelay(ctx context.Context, args []string, logger *log.Logger) error {
 	return srv.Run(ctx)
 }
 
-func runClient(ctx context.Context, args []string, logger *log.Logger) error {
+func runClient(ctx context.Context, args []string) error {
+	cfg, configPath, err := loadConfig(args)
+	if err != nil {
+		return err
+	}
+	intervalDefault, err := durationFrom(envOr("COPI_CLIENT_INTERVAL", cfg.Client.Interval), "client interval")
+	if err != nil {
+		return err
+	}
+	waitDefault, err := durationFrom(envOr("COPI_CLIENT_LONG_POLL_WAIT", cfg.Client.LongPollWait), "client long_poll_wait")
+	if err != nil {
+		return err
+	}
+
 	fs := flag.NewFlagSet("client", flag.ExitOnError)
-	serverURL := fs.String("server", os.Getenv("COPI_SERVER_URL"), "server URL, for example http://192.168.1.10:9527")
-	token := fs.String("token", os.Getenv("COPI_TOKEN"), "optional shared token")
-	name := fs.String("name", config.DefaultDeviceName(), "device name")
-	id := fs.String("id", "", "device id; generated and persisted when omitted")
-	interval := fs.Duration("interval", 500*time.Millisecond, "clipboard polling interval")
-	wait := fs.Duration("wait", 30*time.Second, "server long-poll wait time")
+	_ = fs.String("config", configPath, "config file path")
+	serverURL := fs.String("server", envOr("COPI_SERVER_URL", cfg.Client.ServerURL), "server URL, for example http://192.168.1.10:9527")
+	token := fs.String("token", envOr("COPI_TOKEN", cfg.Token), "optional shared token")
+	name := fs.String("name", envOr("COPI_DEVICE_NAME", cfg.Device.Name), "device name")
+	id := fs.String("id", envOr("COPI_DEVICE_ID", cfg.Device.ID), "device id; generated and persisted when omitted")
+	interval := fs.Duration("interval", intervalDefault, "clipboard polling interval")
+	wait := fs.Duration("wait", waitDefault, "server long-poll wait time")
+	logFormat := fs.String("log-format", envOr("COPI_LOG_FORMAT", cfg.LogFormat), "log format: text or json")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if strings.TrimSpace(*serverURL) == "" {
 		return fmt.Errorf("client mode requires --server")
+	}
+	logger, err := commandLogger(*logFormat)
+	if err != nil {
+		return err
 	}
 
 	deviceID, err := resolveDeviceID(*id)
@@ -94,7 +128,12 @@ func runClient(ctx context.Context, args []string, logger *log.Logger) error {
 		return err
 	}
 
-	logger.Printf("starting client mode as %s (%s)", *name, deviceID)
+	logger.Info("client_starting", "starting client mode", eventlog.Fields{
+		"device_id":   deviceID,
+		"device_name": *name,
+		"server":      *serverURL,
+		"config":      configPath,
+	})
 	return client.Run(ctx, client.Options{
 		ServerURL:    *serverURL,
 		Token:        *token,
@@ -107,16 +146,31 @@ func runClient(ctx context.Context, args []string, logger *log.Logger) error {
 	})
 }
 
-func runLAN(ctx context.Context, args []string, logger *log.Logger) error {
+func runLAN(ctx context.Context, args []string) error {
+	cfg, configPath, err := loadConfig(args)
+	if err != nil {
+		return err
+	}
+	intervalDefault, err := durationFrom(envOr("COPI_LAN_INTERVAL", cfg.LAN.Interval), "lan interval")
+	if err != nil {
+		return err
+	}
+
 	fs := flag.NewFlagSet("lan", flag.ExitOnError)
-	listen := fs.String("listen", envOr("COPI_LAN_LISTEN", "0.0.0.0:9528"), "local peer HTTP listen address")
-	advertise := fs.String("advertise", os.Getenv("COPI_LAN_ADVERTISE_URL"), "HTTP URL announced to peers; auto-detected when omitted")
-	multicast := fs.String("multicast", envOr("COPI_LAN_MULTICAST_ADDR", lan.DefaultMulticastAddress), "UDP multicast address for peer discovery")
-	token := fs.String("token", os.Getenv("COPI_TOKEN"), "optional shared token")
-	name := fs.String("name", config.DefaultDeviceName(), "device name")
-	id := fs.String("id", "", "device id; generated and persisted when omitted")
-	interval := fs.Duration("interval", 500*time.Millisecond, "clipboard polling interval")
+	_ = fs.String("config", configPath, "config file path")
+	listen := fs.String("listen", envOr("COPI_LAN_LISTEN", cfg.LAN.ListenAddr), "local peer HTTP listen address")
+	advertise := fs.String("advertise", envOr("COPI_LAN_ADVERTISE_URL", cfg.LAN.AdvertiseURL), "HTTP URL announced to peers; auto-detected when omitted")
+	multicast := fs.String("multicast", envOr("COPI_LAN_MULTICAST_ADDR", cfg.LAN.MulticastAddr), "UDP multicast address for peer discovery")
+	token := fs.String("token", envOr("COPI_TOKEN", cfg.Token), "optional shared token")
+	name := fs.String("name", envOr("COPI_DEVICE_NAME", cfg.Device.Name), "device name")
+	id := fs.String("id", envOr("COPI_DEVICE_ID", cfg.Device.ID), "device id; generated and persisted when omitted")
+	interval := fs.Duration("interval", intervalDefault, "clipboard polling interval")
+	logFormat := fs.String("log-format", envOr("COPI_LOG_FORMAT", cfg.LogFormat), "log format: text or json")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	logger, err := commandLogger(*logFormat)
+	if err != nil {
 		return err
 	}
 
@@ -125,7 +179,14 @@ func runLAN(ctx context.Context, args []string, logger *log.Logger) error {
 		return err
 	}
 
-	logger.Printf("starting LAN mode as %s (%s)", *name, deviceID)
+	logger.Info("lan_starting", "starting LAN mode", eventlog.Fields{
+		"device_id":      deviceID,
+		"device_name":    *name,
+		"listen":         *listen,
+		"advertise_url":  *advertise,
+		"multicast_addr": *multicast,
+		"config":         configPath,
+	})
 	return lan.Run(ctx, lan.Options{
 		ListenAddr:    *listen,
 		AdvertiseURL:  *advertise,
@@ -146,6 +207,94 @@ func resolveDeviceID(given string) (string, error) {
 	return config.DeviceID()
 }
 
+func loadConfig(args []string) (config.Config, string, error) {
+	return config.Load(configPathFromArgs(args))
+}
+
+func configPathFromArgs(args []string) string {
+	for i, arg := range args {
+		if arg == "--config" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(arg, "--config=") {
+			return strings.TrimPrefix(arg, "--config=")
+		}
+	}
+	return ""
+}
+
+func durationFrom(value, label string) (time.Duration, error) {
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s duration %q: %w", label, value, err)
+	}
+	return duration, nil
+}
+
+func commandLogger(rawFormat string) (*eventlog.Logger, error) {
+	format, err := eventlog.ParseFormat(rawFormat)
+	if err != nil {
+		return nil, err
+	}
+	return eventlog.New(os.Stdout, format), nil
+}
+
+func runConfig(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("config requires a subcommand: path, init, or show")
+	}
+
+	switch args[0] {
+	case "path":
+		fs := flag.NewFlagSet("config path", flag.ExitOnError)
+		configPath := fs.String("config", "", "config file path")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		_, resolved, err := config.Load(*configPath)
+		if err != nil {
+			return err
+		}
+		fmt.Println(resolved)
+		return nil
+	case "init":
+		fs := flag.NewFlagSet("config init", flag.ExitOnError)
+		configPath := fs.String("config", "", "config file path")
+		force := fs.Bool("force", false, "overwrite existing config")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		resolved, err := config.Init(*configPath, *force)
+		if err != nil {
+			return err
+		}
+		fmt.Println(resolved)
+		return nil
+	case "show":
+		fs := flag.NewFlagSet("config show", flag.ExitOnError)
+		configPath := fs.String("config", "", "config file path")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		cfg, resolved, err := config.Load(*configPath)
+		if err != nil {
+			return err
+		}
+		output := struct {
+			Path   string        `json:"path"`
+			Config config.Config `json:"config"`
+		}{
+			Path:   resolved,
+			Config: cfg,
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(output)
+	default:
+		return fmt.Errorf("unknown config subcommand: %s", args[0])
+	}
+}
+
 func runStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "print machine-readable JSON")
@@ -162,6 +311,7 @@ func runStatus(args []string) error {
 			"server",
 			"client",
 			"lan",
+			"config",
 			"status",
 			"version",
 		},
@@ -176,6 +326,8 @@ func runStatus(args []string) error {
 			"file_clipboard":      false,
 			"rich_text_clipboard": false,
 			"docker_relay":        true,
+			"file_config":         true,
+			"json_logs":           true,
 			"lan_discovery":       true,
 		},
 	}
@@ -188,8 +340,8 @@ func runStatus(args []string) error {
 
 	fmt.Println("copi", version)
 	fmt.Println("kind: core-cli")
-	fmt.Println("commands: relay, server, client, lan, status, version")
-	fmt.Println("capabilities: text_clipboard, docker_relay, lan_discovery")
+	fmt.Println("commands: relay, server, client, lan, config, status, version")
+	fmt.Println("capabilities: text_clipboard, docker_relay, file_config, json_logs, lan_discovery")
 	return nil
 }
 
@@ -205,10 +357,11 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `copi %s
 
 Usage:
-  copi server [--addr 0.0.0.0:9527] [--token secret]
-  copi relay [--addr 0.0.0.0:9527] [--token secret]
-  copi client --server http://host:9527 [--token secret]
-  copi lan [--listen 0.0.0.0:9528] [--token secret]
+  copi server [--addr 0.0.0.0:9527] [--token secret] [--log-format text|json]
+  copi relay [--addr 0.0.0.0:9527] [--token secret] [--log-format text|json]
+  copi client --server http://host:9527 [--token secret] [--log-format text|json]
+  copi lan [--listen 0.0.0.0:9528] [--token secret] [--log-format text|json]
+  copi config path|init|show
   copi status [--json]
   copi version
 
@@ -217,6 +370,7 @@ Modes:
   relay    Alias for server.
   client   Device-side clipboard client. Fill in the relay URL and it can sync.
   lan      Zero-config LAN mode. Peers discover each other and sync clipboard text directly.
+  config   Manage the CLI config file used by native shells.
   status   Machine-readable capabilities for native app shells.
 
 `, version)

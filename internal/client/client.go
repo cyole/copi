@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cyole/copi/internal/clipboard"
+	"github.com/cyole/copi/internal/eventlog"
 	"github.com/cyole/copi/internal/protocol"
 )
 
@@ -26,7 +26,7 @@ type Options struct {
 	Interval     time.Duration
 	LongPollWait time.Duration
 	Clipboard    clipboard.Provider
-	Logger       *log.Logger
+	Logger       *eventlog.Logger
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -34,7 +34,7 @@ func Run(ctx context.Context, opts Options) error {
 		return errors.New("clipboard provider is required")
 	}
 	if opts.Logger == nil {
-		opts.Logger = log.Default()
+		opts.Logger = eventlog.Discard()
 	}
 	if opts.Interval <= 0 {
 		opts.Interval = 500 * time.Millisecond
@@ -47,6 +47,12 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
+	opts.Logger.Info("started", "client sync started", eventlog.Fields{
+		"mode":        "client",
+		"server":      baseURL,
+		"device_id":   opts.DeviceID,
+		"device_name": opts.DeviceName,
+	})
 
 	httpClient := &http.Client{Timeout: opts.LongPollWait + 10*time.Second}
 	state := &syncState{}
@@ -113,7 +119,9 @@ func watchLocal(ctx context.Context, opts Options, baseURL string, httpClient *h
 		case <-ticker.C:
 			text, err := opts.Clipboard.ReadText()
 			if err != nil {
-				opts.Logger.Printf("clipboard read failed: %v", err)
+				opts.Logger.Error("clipboard_read_failed", "clipboard read failed", eventlog.Fields{
+					"error": err.Error(),
+				})
 				continue
 			}
 			if text == "" {
@@ -129,12 +137,18 @@ func watchLocal(ctx context.Context, opts Options, baseURL string, httpClient *h
 			env := protocol.NewEnvelope(opts.DeviceID, opts.DeviceName, payload)
 			published, err := publish(ctx, httpClient, baseURL, opts.Token, env)
 			if err != nil {
-				opts.Logger.Printf("publish failed: %v", err)
+				opts.Logger.Error("publish_failed", "publish failed", eventlog.Fields{
+					"error":  err.Error(),
+					"server": baseURL,
+				})
 				continue
 			}
 			state.MarkHash(hash)
 			state.MarkSeq(published.Seq)
-			opts.Logger.Printf("published clipboard text (%d bytes), seq=%d", len(text), published.Seq)
+			opts.Logger.Info("clipboard_published", "published clipboard text", eventlog.Fields{
+				"bytes": len(text),
+				"seq":   published.Seq,
+			})
 		}
 	}
 }
@@ -146,7 +160,10 @@ func pullRemote(ctx context.Context, opts Options, baseURL string, httpClient *h
 			if errors.Is(err, context.Canceled) {
 				return nil
 			}
-			opts.Logger.Printf("poll failed: %v", err)
+			opts.Logger.Error("poll_failed", "poll failed", eventlog.Fields{
+				"error":  err.Error(),
+				"server": baseURL,
+			})
 			sleep(ctx, 2*time.Second)
 			continue
 		}
@@ -159,7 +176,10 @@ func pullRemote(ctx context.Context, opts Options, baseURL string, httpClient *h
 			continue
 		}
 		if env.Payload.Type != protocol.ContentTypeText {
-			opts.Logger.Printf("ignored unsupported payload type: %s", env.Payload.Type)
+			opts.Logger.Warn("unsupported_payload_ignored", "ignored unsupported payload type", eventlog.Fields{
+				"payload_type": env.Payload.Type,
+				"seq":          env.Seq,
+			})
 			continue
 		}
 
@@ -172,11 +192,19 @@ func pullRemote(ctx context.Context, opts Options, baseURL string, httpClient *h
 		}
 
 		if err := opts.Clipboard.WriteText(env.Payload.Text); err != nil {
-			opts.Logger.Printf("clipboard write failed: %v", err)
+			opts.Logger.Error("clipboard_write_failed", "clipboard write failed", eventlog.Fields{
+				"error": err.Error(),
+				"seq":   env.Seq,
+			})
 			continue
 		}
 		state.MarkHash(hash)
-		opts.Logger.Printf("applied clipboard text from %s (%d bytes), seq=%d", env.DeviceName, len(env.Payload.Text), env.Seq)
+		opts.Logger.Info("clipboard_applied", "applied clipboard text", eventlog.Fields{
+			"bytes":            len(env.Payload.Text),
+			"from_device_id":   env.DeviceID,
+			"from_device_name": env.DeviceName,
+			"seq":              env.Seq,
+		})
 	}
 }
 

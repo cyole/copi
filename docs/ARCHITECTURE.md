@@ -33,6 +33,8 @@ Native shells own:
 
 The shell should not reimplement the sync algorithm. It should launch `copi client` or `copi lan`, pass configuration through flags or environment variables, and use `copi status --json` for feature detection.
 
+The stable shell-facing contract lives in [CLI_CONTRACT.md](CLI_CONTRACT.md).
+
 ## Runtime Modes
 
 ### Server Mode

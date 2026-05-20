@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -14,13 +13,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cyole/copi/internal/eventlog"
 	"github.com/cyole/copi/internal/protocol"
 )
 
 type Options struct {
 	Addr   string
 	Token  string
-	Logger *log.Logger
+	Logger *eventlog.Logger
 }
 
 type Server struct {
@@ -37,7 +37,7 @@ type Hub struct {
 
 func New(opts Options) *Server {
 	if opts.Logger == nil {
-		opts.Logger = log.Default()
+		opts.Logger = eventlog.Discard()
 	}
 	return &Server{
 		opts: opts,
@@ -65,7 +65,10 @@ func (s *Server) Run(ctx context.Context) error {
 		_ = httpServer.Shutdown(shutdownCtx)
 	}()
 
-	s.opts.Logger.Printf("HTTP relay listening on http://%s", listener.Addr().String())
+	s.opts.Logger.Info("relay_started", "HTTP relay listening", eventlog.Fields{
+		"addr": listener.Addr().String(),
+		"url":  "http://" + listener.Addr().String(),
+	})
 	err = httpServer.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
@@ -110,7 +113,12 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	env = s.hub.Publish(env)
-	s.opts.Logger.Printf("published seq=%d from %s (%s)", env.Seq, env.DeviceName, env.DeviceID)
+	s.opts.Logger.Info("relay_published", "relay received clipboard payload", eventlog.Fields{
+		"device_id":    env.DeviceID,
+		"device_name":  env.DeviceName,
+		"payload_type": env.Payload.Type,
+		"seq":          env.Seq,
+	})
 	writeJSON(w, http.StatusOK, env)
 }
 

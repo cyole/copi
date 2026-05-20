@@ -17,6 +17,8 @@ Native apps should treat the CLI as the product core:
 
 Do not parse human log lines as an API. Anything the shell needs should become a stable JSON command in the CLI.
 
+The current shell contract is documented in [../docs/CLI_CONTRACT.md](../docs/CLI_CONTRACT.md).
+
 ## Recommended Stacks
 
 - macOS: SwiftUI + NSPasteboard

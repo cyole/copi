@@ -12,6 +12,19 @@ Check the CLI core from a native shell:
 ./bin/copi status --json
 ```
 
+Create and inspect a config file:
+
+```bash
+./bin/copi config init
+./bin/copi config show
+```
+
+Run with JSON logs for a native shell:
+
+```bash
+./bin/copi client --server http://192.168.1.10:9527 --token my-secret --log-format json
+```
+
 ## Server Mode
 
 A third-party machine runs the HTTP relay. This machine does not read or write its own clipboard:
