@@ -236,7 +236,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\nREPO_ROOT=\"${SRCROOT}/../..\"\nCLI_OUT=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/copi\"\nmkdir -p \"$(dirname \"$CLI_OUT\")\"\ncd \"$REPO_ROOT\"\ngo build -o \"$CLI_OUT\" ./cmd/copi\nchmod +x \"$CLI_OUT\"\n";
+			shellScript = "set -euo pipefail\nexport PATH=\"/opt/homebrew/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\"\nREPO_ROOT=\"${SRCROOT}/../..\"\nCLI_OUT=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/copi\"\nGO_BIN=\"$(command -v go || true)\"\nif [ -z \"$GO_BIN\" ]; then\n  echo \"error: go was not found. Install Go or add it to Xcode's PATH.\" >&2\n  echo \"checked PATH=$PATH\" >&2\n  exit 1\nfi\necho \"Using Go: $GO_BIN\"\n\"$GO_BIN\" version\nmkdir -p \"$(dirname \"$CLI_OUT\")\"\ncd \"$REPO_ROOT\"\n\"$GO_BIN\" build -o \"$CLI_OUT\" ./cmd/copi\nchmod +x \"$CLI_OUT\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
