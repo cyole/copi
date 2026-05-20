@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Copi
+Comment=Clipboard sync tray app
+Exec=copi-gtk
+Icon=com.cyole.copi
+Terminal=false
+Categories=Utility;

@@ -57,3 +57,15 @@ open clients/macos/Copi.xcodeproj
 ```
 
 The target is named `Copi` and bundles the Go CLI during the Xcode build.
+
+## Current Linux Client
+
+The first Linux shell lives at [linux](linux). It is a GTK tray app with an AppIndicator cloud icon and a settings/logs window.
+
+Run it on Linux with:
+
+```bash
+./clients/linux/run.sh
+```
+
+The script builds the Go CLI into `clients/linux/build/copi` and launches the GTK shell with that binary.
