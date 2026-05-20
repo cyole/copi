@@ -16,12 +16,7 @@
 		A00000000000000000000107 /* CLIPathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001007 /* CLIPathResolver.swift */; };
 		A00000000000000000000108 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001008 /* SettingsStore.swift */; };
 		A00000000000000000000109 /* CopiProcessController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001009 /* CopiProcessController.swift */; };
-		A00000000000000000000110 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001010 /* ContentView.swift */; };
-		A00000000000000000000111 /* SyncView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001011 /* SyncView.swift */; };
-		A00000000000000000000112 /* StatusHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001012 /* StatusHeaderView.swift */; };
 		A00000000000000000000113 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001013 /* SettingsView.swift */; };
-		A00000000000000000000114 /* DevicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001014 /* DevicesView.swift */; };
-		A00000000000000000000115 /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001015 /* LogsView.swift */; };
 		A00000000000000000000116 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001016 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -35,12 +30,7 @@
 		A00000000000000000001007 /* CLIPathResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIPathResolver.swift; sourceTree = "<group>"; };
 		A00000000000000000001008 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		A00000000000000000001009 /* CopiProcessController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CopiProcessController.swift; sourceTree = "<group>"; };
-		A00000000000000000001010 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		A00000000000000000001011 /* SyncView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncView.swift; sourceTree = "<group>"; };
-		A00000000000000000001012 /* StatusHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusHeaderView.swift; sourceTree = "<group>"; };
 		A00000000000000000001013 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		A00000000000000000001014 /* DevicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicesView.swift; sourceTree = "<group>"; };
-		A00000000000000000001015 /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
 		A00000000000000000001016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A00000000000000000001017 /* Copi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Copi.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -133,12 +123,7 @@
 		A00000000000000000000016 /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				A00000000000000000001010 /* ContentView.swift */,
-				A00000000000000000001014 /* DevicesView.swift */,
-				A00000000000000000001015 /* LogsView.swift */,
 				A00000000000000000001013 /* SettingsView.swift */,
-				A00000000000000000001012 /* StatusHeaderView.swift */,
-				A00000000000000000001011 /* SyncView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -250,15 +235,10 @@
 				A00000000000000000000104 /* CopiLogEvent.swift in Sources */,
 				A00000000000000000000109 /* CopiProcessController.swift in Sources */,
 				A00000000000000000000107 /* CLIPathResolver.swift in Sources */,
-				A00000000000000000000114 /* DevicesView.swift in Sources */,
-				A00000000000000000000115 /* LogsView.swift in Sources */,
 				A00000000000000000000105 /* ProcessStatus.swift in Sources */,
 				A00000000000000000000106 /* SecretGenerator.swift in Sources */,
 				A00000000000000000000113 /* SettingsView.swift in Sources */,
 				A00000000000000000000108 /* SettingsStore.swift in Sources */,
-				A00000000000000000000112 /* StatusHeaderView.swift in Sources */,
-				A00000000000000000000111 /* SyncView.swift in Sources */,
-				A00000000000000000000110 /* ContentView.swift in Sources */,
 				A00000000000000000000102 /* SyncMode.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -392,6 +372,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Copi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -421,6 +402,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Copi;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

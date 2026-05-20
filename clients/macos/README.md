@@ -1,6 +1,6 @@
 # Copi macOS Client
 
-This is the first native shell for Copi. The app is a SwiftUI macOS app that launches the Go CLI core as a child process.
+This is the first native shell for Copi. The app is a SwiftUI menu bar app that launches the Go CLI core as a child process.
 
 ## Open In Xcode
 
@@ -8,7 +8,7 @@ This is the first native shell for Copi. The app is a SwiftUI macOS app that lau
 open clients/macos/Copi.xcodeproj
 ```
 
-Choose the `Copi` scheme and press Run.
+Choose the `Copi` scheme and press Run. Copi appears in the macOS menu bar instead of opening a main window.
 
 The Xcode target has a build phase named `Build Go CLI`. It runs:
 
@@ -44,6 +44,8 @@ Useful modes:
 - configure relay URL, token, device name, and device ID
 - generate a LAN sync key
 - start and stop `copi client`
-- show process status and JSON log events
+- show process status from the menu bar
+
+All settings live in the app's Settings window, opened from the menu bar item.
 
 LAN pairing UI is still a product direction document for now. See [../../docs/LAN_PAIRING.md](../../docs/LAN_PAIRING.md).
