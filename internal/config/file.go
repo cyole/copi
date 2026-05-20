@@ -39,7 +39,7 @@ type RelayConfig struct {
 }
 
 type ClientConfig struct {
-	ServerURL    string `json:"server_url,omitempty"`
+	RelayURL     string `json:"relay_url,omitempty"`
 	Interval     string `json:"interval,omitempty"`
 	LongPollWait string `json:"long_poll_wait,omitempty"`
 }
@@ -165,8 +165,8 @@ func Get(cfg Config, key string) (string, error) {
 		return cfg.Device.Name, nil
 	case "relay.addr":
 		return cfg.Relay.Addr, nil
-	case "client.server_url":
-		return cfg.Client.ServerURL, nil
+	case "client.relay_url":
+		return cfg.Client.RelayURL, nil
 	case "client.interval":
 		return cfg.Client.Interval, nil
 	case "client.long_poll_wait":
@@ -199,8 +199,8 @@ func Set(cfg *Config, key, value string) error {
 		cfg.Device.Name = value
 	case "relay.addr":
 		cfg.Relay.Addr = value
-	case "client.server_url":
-		cfg.Client.ServerURL = value
+	case "client.relay_url":
+		cfg.Client.RelayURL = value
 	case "client.interval":
 		if err := validateDuration(key, value); err != nil {
 			return err

@@ -20,4 +20,4 @@ EXPOSE 9527
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 CMD wget -qO- http://127.0.0.1:9527/health >/dev/null || exit 1
 
 ENTRYPOINT ["copi"]
-CMD ["server"]
+CMD ["relay"]

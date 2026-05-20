@@ -1,6 +1,6 @@
 # Docker Deployment
 
-The Docker image is for the third-party HTTP relay used by server mode. It does not read or write the host clipboard.
+The Docker image is for the third-party HTTP relay. It does not read or write the host clipboard.
 
 ## One-Command Compose Deployment
 
@@ -21,7 +21,7 @@ curl http://127.0.0.1:9527/health
 Then point clients at:
 
 ```bash
-copi client --server http://YOUR_SERVER_IP:9527 --token "$(grep '^COPI_TOKEN=' .env | cut -d= -f2-)"
+copi client --relay http://YOUR_SERVER_IP:9527 --token "$(grep '^COPI_TOKEN=' .env | cut -d= -f2-)"
 ```
 
 ## Compose With A Fixed Token

@@ -16,12 +16,12 @@ The Go CLI core is intentionally headless. Native apps should wrap it first, so 
 
 The CLI owns:
 
-- server-mode client sync
+- relay-backed client sync
 - third-party HTTP relay
 - LAN discovery and peer sync
 - protocol compatibility
 - clipboard polling/apply behavior
-- machine-readable status/capability reporting
+- machine-readable capability reporting
 
 Native shells own:
 
@@ -31,21 +31,21 @@ Native shells own:
 - notifications
 - platform-specific packaging and updates
 
-The shell should not reimplement the sync algorithm. It should launch `copi client` or `copi lan`, pass configuration through flags or environment variables, and use `copi status --json` for feature detection.
+The shell should not reimplement the sync algorithm. It should launch `copi client --relay ...` or `copi client --lan`, pass configuration through flags or environment variables, and use `copi version --json` for feature detection.
 
 The stable shell-facing contract lives in [CLI_CONTRACT.md](CLI_CONTRACT.md).
 
 ## Runtime Modes
 
-### Server Mode
+### Relay-Backed Mode
 
-`copi server` starts a third-party HTTP relay. This process does not read from or write to its own clipboard. It can run on a cloud VM, NAS, mini PC, or any always-on machine.
+`copi relay` starts a third-party HTTP relay. This process does not read from or write to its own clipboard. It can run on a cloud VM, NAS, mini PC, or any always-on machine.
 
-`copi client` runs on each desktop device, watches the local clipboard, publishes changes, long-polls the server, and applies remote changes to the local clipboard.
+`copi client --relay ...` runs on each desktop device, watches the local clipboard, publishes changes, long-polls the relay, and applies remote changes to the local clipboard.
 
 ### LAN Mode
 
-`copi lan` starts a local HTTP peer endpoint and UDP multicast discovery. Peers announce their HTTP URL every few seconds. When the local clipboard changes, the device posts the new payload to every known peer.
+`copi client --lan` starts a local HTTP peer endpoint and UDP multicast discovery. Peers announce their HTTP URL every few seconds. When the local clipboard changes, the device posts the new payload to every known peer.
 
 ## Protocol
 
@@ -79,4 +79,4 @@ Native clients should keep platform UI and clipboard code native while reusing t
 - iOS/iPadOS: SwiftUI app with UIPasteboard. Background clipboard behavior needs platform-specific review.
 - Android: Kotlin + Jetpack Compose with ClipboardManager. Background clipboard access depends on Android version restrictions.
 
-The first practical client milestone is a native settings shell that can choose server mode or LAN mode, configure token/server URL, and manage startup behavior while delegating sync to the Go daemon.
+The first practical client milestone is a native settings shell that can choose relay-backed mode or LAN mode, configure token/relay URL, and manage startup behavior while delegating sync to the Go daemon.

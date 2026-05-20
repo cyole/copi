@@ -33,16 +33,12 @@ func main() {
 
 	var err error
 	switch os.Args[1] {
-	case "server", "relay":
+	case "relay":
 		err = runRelay(ctx, os.Args[2:])
 	case "client":
 		err = runClient(ctx, os.Args[2:])
-	case "lan":
-		err = runLAN(ctx, os.Args[2:])
 	case "version":
-		fmt.Println("copi", version)
-	case "status":
-		err = runStatus(os.Args[2:])
+		err = runVersion(os.Args[2:])
 	case "config":
 		err = runConfig(os.Args[2:])
 	case "doctor":
@@ -66,7 +62,7 @@ func runRelay(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fs := flag.NewFlagSet("server", flag.ExitOnError)
+	fs := flag.NewFlagSet("relay", flag.ExitOnError)
 	_ = fs.String("config", configPath, "config file path")
 	addr := fs.String("addr", envOr("COPI_ADDR", cfg.Relay.Addr), "HTTP listen address")
 	token := fs.String("token", envOr("COPI_TOKEN", cfg.Token), "optional shared token")
@@ -97,6 +93,13 @@ func runClient(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if boolFromArgs(args, "lan", false) {
+		return runClientLAN(ctx, args, cfg, configPath)
+	}
+	return runClientRelay(ctx, args, cfg, configPath)
+}
+
+func runClientRelay(ctx context.Context, args []string, cfg config.Config, configPath string) error {
 	intervalDefault, err := durationFrom(envOr("COPI_CLIENT_INTERVAL", cfg.Client.Interval), "client interval")
 	if err != nil {
 		return err
@@ -108,18 +111,19 @@ func runClient(ctx context.Context, args []string) error {
 
 	fs := flag.NewFlagSet("client", flag.ExitOnError)
 	_ = fs.String("config", configPath, "config file path")
-	serverURL := fs.String("server", envOr("COPI_SERVER_URL", cfg.Client.ServerURL), "server URL, for example http://192.168.1.10:9527")
+	_ = fs.Bool("lan", false, "use LAN mode")
+	relayURL := fs.String("relay", envOr("COPI_RELAY_URL", cfg.Client.RelayURL), "relay URL, for example http://192.168.1.10:9527")
 	token := fs.String("token", envOr("COPI_TOKEN", cfg.Token), "optional shared token")
 	name := fs.String("name", envOr("COPI_DEVICE_NAME", cfg.Device.Name), "device name")
 	id := fs.String("id", envOr("COPI_DEVICE_ID", cfg.Device.ID), "device id; generated and persisted when omitted")
 	interval := fs.Duration("interval", intervalDefault, "clipboard polling interval")
-	wait := fs.Duration("wait", waitDefault, "server long-poll wait time")
+	wait := fs.Duration("wait", waitDefault, "relay long-poll wait time")
 	logFormat := fs.String("log-format", envOr("COPI_LOG_FORMAT", cfg.LogFormat), "log format: text or json")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if strings.TrimSpace(*serverURL) == "" {
-		return fmt.Errorf("client mode requires --server")
+	if strings.TrimSpace(*relayURL) == "" {
+		return fmt.Errorf("client requires --relay")
 	}
 	logger, err := commandLogger(*logFormat)
 	if err != nil {
@@ -131,14 +135,14 @@ func runClient(ctx context.Context, args []string) error {
 		return err
 	}
 
-	logger.Info("client_starting", "starting client mode", eventlog.Fields{
+	logger.Info("client_starting", "starting client", eventlog.Fields{
 		"device_id":   deviceID,
 		"device_name": *name,
-		"server":      *serverURL,
+		"relay":       *relayURL,
 		"config":      configPath,
 	})
 	return client.Run(ctx, client.Options{
-		ServerURL:    *serverURL,
+		ServerURL:    *relayURL,
 		Token:        *token,
 		DeviceID:     deviceID,
 		DeviceName:   *name,
@@ -149,18 +153,15 @@ func runClient(ctx context.Context, args []string) error {
 	})
 }
 
-func runLAN(ctx context.Context, args []string) error {
-	cfg, configPath, err := loadConfig(args)
-	if err != nil {
-		return err
-	}
+func runClientLAN(ctx context.Context, args []string, cfg config.Config, configPath string) error {
 	intervalDefault, err := durationFrom(envOr("COPI_LAN_INTERVAL", cfg.LAN.Interval), "lan interval")
 	if err != nil {
 		return err
 	}
 
-	fs := flag.NewFlagSet("lan", flag.ExitOnError)
+	fs := flag.NewFlagSet("client", flag.ExitOnError)
 	_ = fs.String("config", configPath, "config file path")
+	_ = fs.Bool("lan", false, "use LAN mode")
 	listen := fs.String("listen", envOr("COPI_LAN_LISTEN", cfg.LAN.ListenAddr), "local peer HTTP listen address")
 	advertise := fs.String("advertise", envOr("COPI_LAN_ADVERTISE_URL", cfg.LAN.AdvertiseURL), "HTTP URL announced to peers; auto-detected when omitted")
 	multicast := fs.String("multicast", envOr("COPI_LAN_MULTICAST_ADDR", cfg.LAN.MulticastAddr), "UDP multicast address for peer discovery")
@@ -182,7 +183,7 @@ func runLAN(ctx context.Context, args []string) error {
 		return err
 	}
 
-	logger.Info("lan_starting", "starting LAN mode", eventlog.Fields{
+	logger.Info("lan_starting", "starting LAN", eventlog.Fields{
 		"device_id":      deviceID,
 		"device_name":    *name,
 		"listen":         *listen,
@@ -215,15 +216,40 @@ func loadConfig(args []string) (config.Config, string, error) {
 }
 
 func configPathFromArgs(args []string) string {
+	return valueFromArgs(args, "config", "")
+}
+
+func valueFromArgs(args []string, key, fallback string) string {
+	long := "--" + key
+	prefix := long + "="
 	for i, arg := range args {
-		if arg == "--config" && i+1 < len(args) {
+		if arg == long && i+1 < len(args) {
 			return args[i+1]
 		}
-		if strings.HasPrefix(arg, "--config=") {
-			return strings.TrimPrefix(arg, "--config=")
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix)
 		}
 	}
-	return ""
+	return fallback
+}
+
+func boolFromArgs(args []string, key string, fallback bool) bool {
+	long := "--" + key
+	prefix := long + "="
+	for _, arg := range args {
+		if arg == long {
+			return true
+		}
+		if strings.HasPrefix(arg, prefix) {
+			switch strings.ToLower(strings.TrimSpace(strings.TrimPrefix(arg, prefix))) {
+			case "1", "t", "true", "y", "yes", "on":
+				return true
+			case "0", "f", "false", "n", "no", "off":
+				return false
+			}
+		}
+	}
+	return fallback
 }
 
 func durationFrom(value, label string) (time.Duration, error) {
@@ -243,76 +269,7 @@ func commandLogger(rawFormat string) (*eventlog.Logger, error) {
 }
 
 func runConfig(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("config requires a subcommand: path, init, show, get, or set")
-	}
-
-	switch args[0] {
-	case "path":
-		fs := flag.NewFlagSet("config path", flag.ExitOnError)
-		configPath := fs.String("config", "", "config file path")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		_, resolved, err := config.Load(*configPath)
-		if err != nil {
-			return err
-		}
-		fmt.Println(resolved)
-		return nil
-	case "init":
-		fs := flag.NewFlagSet("config init", flag.ExitOnError)
-		configPath := fs.String("config", "", "config file path")
-		force := fs.Bool("force", false, "overwrite existing config")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		resolved, err := config.Init(*configPath, *force)
-		if err != nil {
-			return err
-		}
-		fmt.Println(resolved)
-		return nil
-	case "show":
-		fs := flag.NewFlagSet("config show", flag.ExitOnError)
-		configPath := fs.String("config", "", "config file path")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		cfg, resolved, err := config.Load(*configPath)
-		if err != nil {
-			return err
-		}
-		output := struct {
-			Path   string        `json:"path"`
-			Config config.Config `json:"config"`
-		}{
-			Path:   resolved,
-			Config: cfg,
-		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(output)
-	case "get":
-		fs := flag.NewFlagSet("config get", flag.ExitOnError)
-		configPath := fs.String("config", "", "config file path")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		if fs.NArg() != 1 {
-			return fmt.Errorf("config get requires exactly one key")
-		}
-		cfg, _, err := config.Load(*configPath)
-		if err != nil {
-			return err
-		}
-		value, err := config.Get(cfg, fs.Arg(0))
-		if err != nil {
-			return err
-		}
-		fmt.Println(value)
-		return nil
-	case "set":
+	if len(args) > 0 && args[0] == "set" {
 		fs := flag.NewFlagSet("config set", flag.ExitOnError)
 		configPath := fs.String("config", "", "config file path")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -332,11 +289,32 @@ func runConfig(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Println(resolved)
+		fmt.Printf("updated %s\n", resolved)
 		return nil
-	default:
-		return fmt.Errorf("unknown config subcommand: %s", args[0])
 	}
+
+	fs := flag.NewFlagSet("config", flag.ExitOnError)
+	configPath := fs.String("config", "", "config file path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unknown config subcommand: %s", fs.Arg(0))
+	}
+	cfg, resolved, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	output := struct {
+		Path   string        `json:"path"`
+		Config config.Config `json:"config"`
+	}{
+		Path:   resolved,
+		Config: cfg,
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(output)
 }
 
 func runDoctor(ctx context.Context, args []string) error {
@@ -353,7 +331,7 @@ func runDoctor(ctx context.Context, args []string) error {
 	_ = fs.String("config", configPath, "config file path")
 	asJSON := fs.Bool("json", false, "print machine-readable JSON")
 	mode := fs.String("mode", "all", "doctor mode: all, relay, client, or lan")
-	serverURL := fs.String("server", envOr("COPI_SERVER_URL", cfg.Client.ServerURL), "relay URL to check")
+	relayURL := fs.String("relay", envOr("COPI_RELAY_URL", cfg.Client.RelayURL), "relay URL to check")
 	timeout := fs.Duration("timeout", timeoutDefault, "network check timeout")
 	checkClipboard := fs.Bool("clipboard", false, "check clipboard read access")
 	if err := fs.Parse(args); err != nil {
@@ -364,7 +342,7 @@ func runDoctor(ctx context.Context, args []string) error {
 		ConfigPath:     configPath,
 		Config:         cfg,
 		Mode:           *mode,
-		ServerURL:      *serverURL,
+		ServerURL:      *relayURL,
 		Timeout:        *timeout,
 		CheckClipboard: *checkClipboard,
 		Clipboard:      clipboard.NewSystem(),
@@ -393,31 +371,23 @@ func printDoctorText(report doctor.Report) {
 	}
 }
 
-func runStatus(args []string) error {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
+func runVersion(args []string) error {
+	fs := flag.NewFlagSet("version", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "print machine-readable JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	status := map[string]any{
+	info := map[string]any{
 		"name":    "copi",
 		"version": version,
 		"kind":    "core-cli",
 		"commands": []string{
 			"relay",
-			"server",
 			"client",
-			"lan",
 			"config",
 			"doctor",
-			"status",
 			"version",
-		},
-		"modes": []string{
-			"third-party-http-relay",
-			"server-mode-client",
-			"lan-peer",
 		},
 		"capabilities": map[string]bool{
 			"text_clipboard":      true,
@@ -435,13 +405,10 @@ func runStatus(args []string) error {
 	if *asJSON {
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(status)
+		return encoder.Encode(info)
 	}
 
 	fmt.Println("copi", version)
-	fmt.Println("kind: core-cli")
-	fmt.Println("commands: relay, server, client, lan, config, doctor, status, version")
-	fmt.Println("capabilities: text_clipboard, docker_relay, doctor, file_config, json_logs, lan_discovery")
 	return nil
 }
 
@@ -457,23 +424,20 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `copi %s
 
 Usage:
-  copi server [--addr 0.0.0.0:9527] [--token secret] [--log-format text|json]
   copi relay [--addr 0.0.0.0:9527] [--token secret] [--log-format text|json]
-  copi client --server http://host:9527 [--token secret] [--log-format text|json]
-  copi lan [--listen 0.0.0.0:9528] [--token secret] [--log-format text|json]
-  copi config path|init|show|get|set
+  copi client --relay http://host:9527 [--token secret] [--log-format text|json]
+  copi client --lan [--listen 0.0.0.0:9528] [--token secret] [--log-format text|json]
+  copi config [--config path]
+  copi config set [--config path] <key> <value>
   copi doctor [--json] [--mode all|relay|client|lan]
-  copi status [--json]
-  copi version
+  copi version [--json]
 
-Modes:
-  server   Third-party HTTP relay. It never touches the local clipboard.
-  relay    Alias for server.
-  client   Device-side clipboard client. Fill in the relay URL and it can sync.
-  lan      Zero-config LAN mode. Peers discover each other and sync clipboard text directly.
-  config   Manage the CLI config file used by native shells.
+Commands:
+  relay    Third-party HTTP service. It never touches the local clipboard.
+  client   Device-side sync through a relay URL, or LAN sync with --lan.
+  config   Show or edit the CLI config file used by native shells.
   doctor   Diagnose config, relay, LAN, and optional clipboard access.
-  status   Machine-readable capabilities for native app shells.
+  version  Print version and machine-readable capabilities.
 
 `, version)
 }

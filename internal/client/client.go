@@ -47,9 +47,9 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	opts.Logger.Info("started", "client sync started", eventlog.Fields{
+	opts.Logger.Info("started", "client started", eventlog.Fields{
 		"mode":        "client",
-		"server":      baseURL,
+		"relay":       baseURL,
 		"device_id":   opts.DeviceID,
 		"device_name": opts.DeviceName,
 	})
@@ -138,8 +138,8 @@ func watchLocal(ctx context.Context, opts Options, baseURL string, httpClient *h
 			published, err := publish(ctx, httpClient, baseURL, opts.Token, env)
 			if err != nil {
 				opts.Logger.Error("publish_failed", "publish failed", eventlog.Fields{
-					"error":  err.Error(),
-					"server": baseURL,
+					"error": err.Error(),
+					"relay": baseURL,
 				})
 				continue
 			}
@@ -161,8 +161,8 @@ func pullRemote(ctx context.Context, opts Options, baseURL string, httpClient *h
 				return nil
 			}
 			opts.Logger.Error("poll_failed", "poll failed", eventlog.Fields{
-				"error":  err.Error(),
-				"server": baseURL,
+				"error": err.Error(),
+				"relay": baseURL,
 			})
 			sleep(ctx, 2*time.Second)
 			continue
@@ -228,7 +228,7 @@ func publish(ctx context.Context, httpClient *http.Client, baseURL, token string
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return protocol.Envelope{}, fmt.Errorf("server returned %s: %s", resp.Status, readSmall(resp.Body))
+		return protocol.Envelope{}, fmt.Errorf("relay returned %s: %s", resp.Status, readSmall(resp.Body))
 	}
 
 	var published protocol.Envelope
@@ -270,14 +270,14 @@ func poll(ctx context.Context, httpClient *http.Client, baseURL, token string, s
 	case http.StatusNoContent:
 		return protocol.Envelope{}, false, nil
 	default:
-		return protocol.Envelope{}, false, fmt.Errorf("server returned %s: %s", resp.Status, readSmall(resp.Body))
+		return protocol.Envelope{}, false, fmt.Errorf("relay returned %s: %s", resp.Status, readSmall(resp.Body))
 	}
 }
 
 func normalizeURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", errors.New("server URL is required")
+		return "", errors.New("relay URL is required")
 	}
 	if !strings.Contains(raw, "://") {
 		raw = "http://" + raw
@@ -287,10 +287,10 @@ func normalizeURL(raw string) (string, error) {
 		return "", err
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("unsupported server URL scheme: %s", u.Scheme)
+		return "", fmt.Errorf("unsupported relay URL scheme: %s", u.Scheme)
 	}
 	if u.Host == "" {
-		return "", errors.New("server URL must include a host")
+		return "", errors.New("relay URL must include a host")
 	}
 	return strings.TrimRight(u.String(), "/"), nil
 }

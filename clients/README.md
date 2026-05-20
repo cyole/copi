@@ -8,9 +8,9 @@ The native shell should launch and supervise the CLI instead of reimplementing s
 
 Native apps should treat the CLI as the product core:
 
-- run `copi status --json` to detect version, commands, and capabilities
-- run `copi client --server <url> --token <token>` for server mode
-- run `copi lan --token <token>` for LAN mode
+- run `copi version --json` to detect version, commands, and capabilities
+- run `copi client --relay <url> --token <token>` for relay-backed sync
+- run `copi client --lan --token <token>` for LAN sync
 - run `copi relay` only on third-party relay machines, usually through Docker
 - store user settings in the native app, then pass them to the CLI as flags or environment variables
 - show native status UI by supervising the child process and calling health/status commands
@@ -37,8 +37,8 @@ WPF + .NET is still a good fallback if the first Windows client should be tray-f
 
 Each native client should start as a small settings shell:
 
-- choose server mode or LAN mode
-- configure the third-party relay URL and token for server mode
+- choose relay-backed mode or LAN mode
+- configure the third-party relay URL and token for relay-backed mode
 - show local device name and device ID
 - start/stop the Go sync daemon
 - enable launch at login/startup

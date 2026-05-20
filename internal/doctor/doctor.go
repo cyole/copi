@@ -180,17 +180,17 @@ func checkToken(token string) Check {
 func checkServerURL(ctx context.Context, cfg config.Config, override string, timeout time.Duration) Check {
 	serverURL := strings.TrimSpace(override)
 	if serverURL == "" {
-		serverURL = strings.TrimSpace(cfg.Client.ServerURL)
+		serverURL = strings.TrimSpace(cfg.Client.RelayURL)
 	}
 	if serverURL == "" {
-		return Check{Name: "client.server_url", Status: StatusSkipped, Message: "server URL is not configured"}
+		return Check{Name: "client.relay_url", Status: StatusSkipped, Message: "relay URL is not configured"}
 	}
 	if !strings.Contains(serverURL, "://") {
 		serverURL = "http://" + serverURL
 	}
 	parsed, err := url.Parse(serverURL)
 	if err != nil || parsed.Host == "" {
-		return Check{Name: "client.server_url", Status: StatusFail, Message: "server URL is invalid", Details: map[string]any{"server_url": serverURL}}
+		return Check{Name: "client.relay_url", Status: StatusFail, Message: "relay URL is invalid", Details: map[string]any{"relay_url": serverURL}}
 	}
 
 	healthURL := strings.TrimRight(parsed.String(), "/") + "/health"

@@ -51,7 +51,7 @@ func TestSetGetAndSaveConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	cfg := Default()
 
-	if err := Set(&cfg, "client.server_url", "http://127.0.0.1:9527"); err != nil {
+	if err := Set(&cfg, "client.relay_url", "http://127.0.0.1:9527"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Set(&cfg, "token", "secret"); err != nil {
@@ -66,12 +66,12 @@ func TestSetGetAndSaveConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := Get(loaded, "client.server_url")
+	value, err := Get(loaded, "client.relay_url")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if value != "http://127.0.0.1:9527" {
-		t.Fatalf("client.server_url = %q", value)
+		t.Fatalf("client.relay_url = %q", value)
 	}
 
 	token, err := Get(loaded, "token")
