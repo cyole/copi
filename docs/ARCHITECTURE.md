@@ -47,6 +47,8 @@ The stable shell-facing contract lives in [CLI_CONTRACT.md](CLI_CONTRACT.md).
 
 `copi client --lan` starts a local HTTP peer endpoint and UDP multicast discovery. Peers announce their HTTP URL every few seconds. When the local clipboard changes, the device posts the new payload to every known peer.
 
+The future native-client UX for LAN mode should use device pairing and short-lived pairing codes instead of asking users to type tokens. The detailed product and implementation direction lives in [LAN_PAIRING.md](LAN_PAIRING.md).
+
 ## Protocol
 
 Clipboard payloads are wrapped in an envelope:
@@ -79,4 +81,4 @@ Native clients should keep platform UI and clipboard code native while reusing t
 - iOS/iPadOS: SwiftUI app with UIPasteboard. Background clipboard behavior needs platform-specific review.
 - Android: Kotlin + Jetpack Compose with ClipboardManager. Background clipboard access depends on Android version restrictions.
 
-The first practical client milestone is a native settings shell that can choose relay-backed mode or LAN mode, configure token/relay URL, and manage startup behavior while delegating sync to the Go daemon.
+The first practical client milestone is a native settings shell that can choose relay-backed mode or LAN mode, manage paired LAN devices, configure the relay URL, and manage startup behavior while delegating sync to the Go daemon.

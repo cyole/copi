@@ -43,6 +43,8 @@ copi client --lan \
   --token your-secret
 ```
 
+后续原生客户端的局域网体验会按“关联设备 / 匹配码”来做：用户看到短匹配码，底层保存同步密钥。设计文档见 [docs/LAN_PAIRING.md](docs/LAN_PAIRING.md)。
+
 ## Docker 部署 relay
 
 ```bash

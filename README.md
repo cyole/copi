@@ -43,6 +43,8 @@ copi client --lan \
   --token your-secret
 ```
 
+Future native clients should present LAN setup as "Link Device" with a short pairing code. Internally that pairing creates or shares the sync key. See [docs/LAN_PAIRING.md](docs/LAN_PAIRING.md).
+
 ## Docker Relay
 
 Run the third-party relay with Docker:

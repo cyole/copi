@@ -29,6 +29,8 @@ Example:
 copi client --config ./copi.json --relay http://127.0.0.1:9527
 ```
 
+LAN pairing is a native-app workflow, not a separate user-facing CLI command. For the MVP, native shells may store a generated sync key and pass it to `copi client --lan --token <sync-key>`. The user-facing pairing-code direction is documented in [LAN_PAIRING.md](LAN_PAIRING.md).
+
 ## Doctor
 
 ```bash
