@@ -1,6 +1,7 @@
 # Go
 /bin
 /dist
+/build
 *.test
 *.out
 coverage.txt
@@ -15,6 +16,8 @@ release_notes.md
 
 # IDE
 .idea/
+xcuserdata/
+*.xcuserstate
 *.swp
 *.swo
 *~

@@ -45,3 +45,15 @@ Each native client should start as a small settings shell:
 - show current connection and peer status
 
 The first implementation should run the Go CLI as a child process. Later, if a platform truly needs deeper integration, it can embed the Go core or reimplement the protocol, but that should not be the default path.
+
+## Current macOS Client
+
+The first native app lives at [macos/Copi.xcodeproj](macos/Copi.xcodeproj).
+
+Open it with:
+
+```bash
+open clients/macos/Copi.xcodeproj
+```
+
+The target is named `Copi` and bundles the Go CLI during the Xcode build.
