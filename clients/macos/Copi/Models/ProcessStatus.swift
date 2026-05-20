@@ -37,4 +37,15 @@ enum ProcessStatus: Equatable {
             return false
         }
     }
+
+    var cloudSystemImage: String {
+        switch self {
+        case .stopped:
+            return "icloud"
+        case .starting, .running, .stopping:
+            return "icloud.fill"
+        case .failed:
+            return "exclamationmark.icloud.fill"
+        }
+    }
 }

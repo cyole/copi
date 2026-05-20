@@ -15,7 +15,7 @@ struct CopiApp: App {
                 .environmentObject(processController)
                 .environmentObject(windowController)
         } label: {
-            Label("Copi", systemImage: processController.isRunning ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath.circle")
+            Label("Copi", systemImage: processController.status.cloudSystemImage)
         }
         .menuBarExtraStyle(.menu)
     }

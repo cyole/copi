@@ -80,7 +80,7 @@ struct SettingsView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+            Image(systemName: processController.status.cloudSystemImage)
                 .font(.system(size: 30))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(Color.accentColor)
