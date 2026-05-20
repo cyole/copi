@@ -13,12 +13,11 @@ final class AppWindowController: ObservableObject {
             let rootView = SettingsView()
                 .environmentObject(settings)
                 .environmentObject(processController)
-                .frame(width: 560, height: 420)
-                .padding()
+                .frame(width: 640, height: 440)
 
             settingsWindow = makeWindow(
                 title: "设置",
-                size: NSSize(width: 600, height: 480),
+                size: NSSize(width: 660, height: 480),
                 rootView: rootView
             )
         }
