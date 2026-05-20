@@ -25,6 +25,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
     }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        TerminationGate.shared.shouldAllowTermination ? .terminateNow : .terminateCancel
+    }
 }
 
 private struct MenuBarContentView: View {
@@ -64,11 +68,11 @@ private struct MenuBarContentView: View {
 
         Button {
             processController.stop()
+            TerminationGate.shared.shouldAllowTermination = true
             NSApp.terminate(nil)
         } label: {
             Label("退出 Copi", systemImage: "power")
         }
-        .keyboardShortcut("q")
     }
 
     private var canToggle: Bool {
@@ -82,4 +86,12 @@ private struct MenuBarContentView: View {
             processController.start(settings: settings.snapshot())
         }
     }
+}
+
+final class TerminationGate {
+    static let shared = TerminationGate()
+
+    var shouldAllowTermination = false
+
+    private init() {}
 }
