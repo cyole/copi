@@ -51,7 +51,6 @@ final class AppWindowController: ObservableObject {
         window.contentViewController = NSHostingController(rootView: rootView)
         window.isReleasedWhenClosed = false
         window.collectionBehavior = [.managed, .moveToActiveSpace]
-        window.center()
         return window
     }
 
@@ -75,8 +74,24 @@ final class AppWindowController: ObservableObject {
         }
 
         NSApp.activate(ignoringOtherApps: true)
+        center(window)
         window.deminiaturize(nil)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+    }
+
+    private func center(_ window: NSWindow) {
+        let screen = window.screen ?? NSScreen.main
+        guard let visibleFrame = screen?.visibleFrame else {
+            window.center()
+            return
+        }
+
+        let frame = window.frame
+        let origin = NSPoint(
+            x: visibleFrame.midX - frame.width / 2,
+            y: visibleFrame.midY - frame.height / 2
+        )
+        window.setFrameOrigin(origin)
     }
 }
