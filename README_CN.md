@@ -1,202 +1,124 @@
-# Copi - 跨平台剪贴板同步工具
-
-[![CI](https://github.com/cyole/copi/workflows/CI/badge.svg)](https://github.com/cyole/copi/actions)
-[![Release](https://github.com/cyole/copi/workflows/Release/badge.svg)](https://github.com/cyole/copi/releases)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+# Copi
 
 [English](README.md) | [使用示例](USAGE_EXAMPLES.md)
 
-一个跨 Linux 和 macOS 系统的剪贴板同步工具，使用 Rust 编写。
+Copi 是一个用 Go 重构的剪贴板同步项目。新目标很简单：一台设备复制，其他设备可以粘贴。
 
-## 功能特性
+这次重构已经抛弃旧 Rust 逻辑，当前仓库包含新的 Go CLI 核心、第三方 HTTP 中转服务、客户端同步循环和局域网自动发现模式。原生桌面/移动客户端只需要围绕 CLI 做一个壳：设置页、托盘/菜单栏、开机启动、通知和打包。
 
-- ✨ 跨平台支持（Linux 和 macOS）
-- 📝 支持文本和图片剪贴板同步
-- 🖼️ 自动检测并同步图片（PNG 格式）
-- 🔄 实时剪贴板监控
-- 🌐 网络同步剪贴板内容
-- 🚀 轻量级和高性能
-- 🔒 使用 SHA-256 避免重复同步
-- 🎯 完整支持 Wayland（使用 wl-clipboard）
+## 当前状态
 
-## 系统要求
+- Go 核心：已迁移
+- CLI 作为跨端同步内核：已实现
+- 服务器模式：已实现，服务端是第三方 HTTP 中转服务，不读取也不写入本机剪贴板
+- 局域网模式：已实现
+- 剪贴板文本同步：已实现
+- 图片、文件、富文本同步：协议已预留，后续实现
+- 原生客户端：规划中
 
-- Rust 1.70 或更高版本
-- Linux 或 macOS 操作系统
-
-> **注意**：Windows 平台尚未测试。虽然代码可能可以在 Windows 上编译，但剪贴板功能和网络同步尚未在该平台上验证。
-
-### Linux 系统依赖
-
-在 Linux 上，需要安装 X11 或 Wayland 的剪贴板支持：
-
-**对于 X11：**
-```bash
-# Ubuntu/Debian
-sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
-
-# Fedora
-sudo dnf install libxcb-devel
-```
-
-**对于 Wayland（推荐）：**
-```bash
-# Ubuntu/Debian
-sudo apt install wl-clipboard
-
-# Fedora
-sudo dnf install wl-clipboard
-
-# Arch Linux
-sudo pacman -S wl-clipboard
-```
-
-程序会自动检测运行环境（X11 或 Wayland）并使用相应的剪贴板后端。
-
-## 安装
-
-### 方式 1: 从 GitHub Release 下载（推荐）
-
-从 [Releases 页面](https://github.com/cyole/copi/releases) 下载适合你系统的预编译二进制文件：
-
-```bash
-# 下载（以 Linux x86_64 为例，请根据你的系统选择）
-wget https://github.com/cyole/copi/releases/latest/download/copi-Linux-x86_64.tar.gz
-
-# 解压
-tar xzf copi-Linux-x86_64.tar.gz
-
-# 移动到系统路径（可选）
-sudo mv copi /usr/local/bin/
-
-# 验证安装
-copi --help
-```
-
-可用的平台：
-- `copi-Linux-x86_64.tar.gz` - Linux x86_64
-- `copi-Linux-aarch64.tar.gz` - Linux ARM64
-- `copi-Darwin-x86_64.tar.gz` - macOS Intel
-- `copi-Darwin-aarch64.tar.gz` - macOS Apple Silicon
-
-### 方式 2: 从源码编译
-
-```bash
-# 克隆仓库
-git clone https://github.com/cyole/copi
-cd copi
-
-# 编译项目
-cargo build --release
-
-# 可执行文件位于
-./target/release/copi
-
-# 可选：安装到系统路径
-cargo install --path .
-```
-
-## 使用方法
+## 模式
 
 ### 服务器模式
 
-在一台机器上启动服务器：
+适合跨网络、多设备、长期在线同步。这里的“服务器”是跑在第三方机器上的 HTTP 中转服务，机器本身不需要图形界面，也不会访问剪贴板。所有真正复制/粘贴的设备都是客户端，只要在客户端里填这个服务地址即可使用。
 
 ```bash
-./target/release/copi server
-# 或者在开发时
-cargo run -- server
+go run ./cmd/copi server --addr 0.0.0.0:9527 --token your-secret
 ```
 
-默认监听地址为 `0.0.0.0:9527`。你也可以指定自定义地址：
+客户端连接这个第三方服务：
 
 ```bash
-copi server --addr 0.0.0.0:8080
+go run ./cmd/copi client --server http://192.168.1.10:9527 --token your-secret
 ```
 
-**只转发模式**（适用于无图形界面的服务器）：
+### 局域网模式
 
-如果你需要在没有图形界面或剪贴板访问权限的服务器上运行，可以使用 `--relay-only` 参数。在这种模式下，服务器只转发客户端之间的剪贴板数据，不会尝试访问本地剪贴板：
+适合同一个 Wi-Fi 或同一个局域网内的设备。每台设备都运行 LAN 模式，设备会自动发现彼此并直接同步。
 
 ```bash
-copi server --relay-only
-# 或指定地址
-copi server --addr 0.0.0.0:8080 --relay-only
+go run ./cmd/copi lan --token your-secret
 ```
 
-这种模式特别适合用于云服务器、Docker 容器或其他无头环境。
-
-### 客户端模式
-
-在另一台机器上启动客户端：
+如果自动识别的本机地址不对，可以手动指定对外广播地址：
 
 ```bash
-copi client --server <服务器IP>:9527
+go run ./cmd/copi lan --listen 0.0.0.0:9528 --advertise http://192.168.1.20:9528 --token your-secret
 ```
 
-例如：
+## 构建
 
 ```bash
-copi client --server 192.168.1.100:9527
+go build -o bin/copi ./cmd/copi
 ```
 
-客户端会自动监听本地剪贴板变化（包括文本和图片），并与服务器同步。
+## Docker 一键部署第三方服务
 
-### 支持的剪贴板内容
+在第三方机器上运行 HTTP 中转服务：
 
-- ✅ 纯文本
-- ✅ 图片（PNG、JPEG 等格式，内部转换为 PNG）
-- ⏳ 未来可能支持：文件、富文本等
+```bash
+printf "COPI_TOKEN=%s\n" "$(openssl rand -hex 16)" > .env && docker compose up -d
+```
 
-## 工作原理
+服务默认暴露 `9527` 端口。客户端填写这个地址即可：
 
-1. **服务器端**：
-   - 监听指定端口接收客户端连接
-   - 监控本地剪贴板变化
-   - 接收来自客户端的剪贴板内容
+```bash
+copi client --server http://服务器IP:9527 --token 你的TOKEN
+```
 
-2. **客户端端**：
-   - 连接到服务器
-   - 监控本地剪贴板变化并发送到服务器
-   - 接收服务器推送的剪贴板内容
-   - 自动更新本地剪贴板
+更多 Docker 配置见 [docs/DOCKER.md](docs/DOCKER.md)。
 
-3. **去重机制**：
-   - 使用 SHA-256 哈希值跟踪剪贴板内容
-   - 避免相同内容的重复同步
+运行测试：
+
+```bash
+go test ./...
+```
+
+## 命令
+
+```text
+copi server [--addr 0.0.0.0:9527] [--token secret]
+copi relay [--addr 0.0.0.0:9527] [--token secret]
+copi client --server http://host:9527 [--token secret]
+copi lan [--listen 0.0.0.0:9528] [--token secret]
+copi status [--json]
+copi version
+```
+
+## 原生客户端方向
+
+Go CLI 核心负责协议、同步、发现和服务端能力；各端原生客户端优先只做原生壳，启动并管理 CLI 进程。原生壳不要解析人类日志，如果需要机器可读信息，使用 `copi status --json`，后续再补更多 JSON 控制命令。
+
+- macOS：SwiftUI + NSPasteboard
+- Windows：推荐 WinUI 3 + C#/.NET；如果要更贴近系统托盘和后台服务，也可以用 WPF + .NET
+- Linux：GTK/libadwaita 或 Qt，剪贴板走 Wayland/X11 后端
+- iOS/iPadOS：SwiftUI + UIPasteboard
+- Android：Kotlin + Jetpack Compose + ClipboardManager
+
+Windows 如果你还没定技术栈，我建议先选 WinUI 3 + C#/.NET：足够原生，生态稳定，也方便做托盘、开机启动、设置页和通知。
 
 ## 架构
 
+```text
+cmd/copi/                 CLI 入口，跨端同步内核
+internal/protocol/        剪贴板消息协议
+internal/server/          第三方 HTTP 中转服务
+internal/client/          服务器模式客户端同步循环
+internal/lan/             局域网发现和点对点同步
+internal/clipboard/       系统剪贴板适配
+internal/config/          设备 ID 和本地配置
 ```
-src/
-├── main.rs                 # 主程序入口和 CLI 处理
-└── modules/
-    ├── mod.rs             # 模块声明
-    ├── clipboard.rs       # 剪贴板监控模块
-    └── sync.rs            # 网络同步模块
-```
 
-## 依赖项
+协议入口：
 
-- `arboard` - 跨平台剪贴板访问（支持文本和图片）
-- `tokio` - 异步运行时
-- `serde` / `serde_json` - 序列化和反序列化
-- `anyhow` - 错误处理
-- `clap` - 命令行参数解析
-- `sha2` - SHA-256 哈希计算
-- `base64` - 图片数据编码
-- `image` - 图片处理和格式转换
+- `POST /v1/clipboard` 发布剪贴板
+- `GET /v1/clipboard?since=<seq>&wait=30s` 长轮询获取最新剪贴板
+- `GET /health` 健康检查
 
-## 安全注意事项
+## 安全
 
-- 目前的实现使用明文传输剪贴板内容
-- 建议在受信任的网络环境中使用
-- 未来版本可以添加 TLS/SSL 加密支持
+当前支持可选共享 token。同步内容仍是明文 HTTP，适合可信局域网或你自己控制的服务器环境。后续可以加 TLS、配对码、设备授权和端到端加密。
 
 ## 许可证
 
 MIT License
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！

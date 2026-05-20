@@ -1,0 +1,11 @@
+services:
+  copi-relay:
+    build: .
+    image: copi:local
+    container_name: copi-relay
+    restart: unless-stopped
+    ports:
+      - "${COPI_PORT:-9527}:9527"
+    environment:
+      COPI_ADDR: "0.0.0.0:9527"
+      COPI_TOKEN: "${COPI_TOKEN:-change-me}"

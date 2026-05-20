@@ -1,203 +1,122 @@
-# Copi - Cross-Platform Clipboard Sync Tool
+# Copi
 
-[![CI](https://github.com/cyole/copi/workflows/CI/badge.svg)](https://github.com/cyole/copi/actions)
-[![Release](https://github.com/cyole/copi/workflows/Release/badge.svg)](https://github.com/cyole/copi/releases)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[中文文档](README_CN.md) | [Usage examples](USAGE_EXAMPLES.md)
 
-[中文文档](README_CN.md) | [使用示例](USAGE_EXAMPLES.md)
+Copi is a Go-based clipboard sync project. The product goal is simple: copy on one device, paste on the others.
 
-A cross-platform clipboard synchronization tool for Linux and macOS, written in Rust.
+This repository has been rewritten from the old Rust implementation. The current codebase contains the new Go CLI core, a third-party HTTP relay service, the device-side client sync loop, and zero-config LAN mode. Native clients should be thin shells around the CLI: settings, tray/menu-bar UI, startup integration, notifications, and packaging.
 
-## Features
+## Current Status
 
-- ✨ Cross-platform support (Linux and macOS)
-- 📝 Supports text and image clipboard synchronization
-- 🖼️ Automatic detection and syncing of images (PNG format)
-- 🔄 Real-time clipboard monitoring
-- 🌐 Network-based clipboard synchronization
-- 🚀 Lightweight and high-performance
-- 🔒 Uses SHA-256 to avoid duplicate synchronization
-- 🎯 Full Wayland support (using wl-clipboard)
+- Go core: implemented
+- CLI as the cross-platform sync engine: implemented
+- Server mode: implemented as a third-party HTTP relay that never reads or writes the machine's clipboard
+- LAN mode: implemented
+- Text clipboard sync: implemented
+- Image, file, and rich text sync: protocol space reserved
+- Native clients: planned
 
-## System Requirements
-
-- Rust 1.70 or higher
-- Linux or macOS operating system
-
-> **Note**: Windows support has not been tested. While the code may compile on Windows, clipboard functionality and network synchronization have not been verified on this platform.
-
-### Linux System Dependencies
-
-On Linux, you need to install clipboard support for either X11 or Wayland:
-
-**For X11:**
-```bash
-# Ubuntu/Debian
-sudo apt-get install libxcb-shape0-dev libxcb-xfixes0-dev
-
-# Fedora
-sudo dnf install libxcb-devel
-```
-
-**For Wayland (Recommended):**
-```bash
-# Ubuntu/Debian
-sudo apt install wl-clipboard
-
-# Fedora
-sudo dnf install wl-clipboard
-
-# Arch Linux
-sudo pacman -S wl-clipboard
-```
-
-The program automatically detects the running environment (X11 or Wayland) and uses the appropriate clipboard backend.
-
-## Installation
-
-### Option 1: Download from GitHub Releases (Recommended)
-
-Download pre-built binaries for your system from the [Releases page](https://github.com/cyole/copi/releases):
-
-```bash
-# Download (using Linux x86_64 as example, choose based on your system)
-wget https://github.com/cyole/copi/releases/latest/download/copi-Linux-x86_64.tar.gz
-
-# Extract
-tar xzf copi-Linux-x86_64.tar.gz
-
-# Move to system path (optional)
-sudo mv copi /usr/local/bin/
-
-# Verify installation
-copi --help
-```
-
-Available platforms:
-- `copi-Linux-x86_64.tar.gz` - Linux x86_64
-- `copi-Linux-aarch64.tar.gz` - Linux ARM64
-- `copi-Darwin-x86_64.tar.gz` - macOS Intel
-- `copi-Darwin-aarch64.tar.gz` - macOS Apple Silicon
-
-### Option 2: Build from Source
-
-```bash
-# Clone the repository
-git clone https://github.com/cyole/copi
-cd copi
-
-# Build the project
-cargo build --release
-
-# The executable is located at
-./target/release/copi
-
-# Optional: Install to system path
-cargo install --path .
-```
-
-## Usage
+## Modes
 
 ### Server Mode
 
-Start the server on one machine:
+Use this when devices sync through a central service running on a third-party machine. The server is only an HTTP relay: it does not need a GUI and never touches the local clipboard. Real copy/paste behavior happens on clients, which only need the relay URL.
 
 ```bash
-./target/release/copi server
-# Or during development
-cargo run -- server
+go run ./cmd/copi server --addr 0.0.0.0:9527 --token your-secret
 ```
 
-The default listening address is `0.0.0.0:9527`. You can also specify a custom address:
+Connect a client:
 
 ```bash
-copi server --addr 0.0.0.0:8080
+go run ./cmd/copi client --server http://192.168.1.10:9527 --token your-secret
 ```
 
-**Relay-Only Mode** (for headless servers):
+### LAN Mode
 
-If you need to run the server on a machine without a graphical interface or clipboard access (such as cloud servers or Docker containers), you can use the `--relay-only` flag. In this mode, the server only relays clipboard data between clients without attempting to access the local clipboard:
+Use this when devices are on the same Wi-Fi or local network. Each device runs LAN mode, discovers peers over UDP multicast, and syncs directly.
 
 ```bash
-copi server --relay-only
-# Or with custom address
-copi server --addr 0.0.0.0:8080 --relay-only
+go run ./cmd/copi lan --token your-secret
 ```
 
-This mode is particularly useful for cloud servers, Docker containers, or other headless environments.
-
-### Client Mode
-
-Start the client on another machine:
+If the auto-detected address is wrong, set the advertised URL manually:
 
 ```bash
-copi client --server <server-ip>:9527
+go run ./cmd/copi lan --listen 0.0.0.0:9528 --advertise http://192.168.1.20:9528 --token your-secret
 ```
 
-For example:
+## Build
 
 ```bash
-copi client --server 192.168.1.100:9527
+go build -o bin/copi ./cmd/copi
 ```
 
-The client automatically monitors local clipboard changes (including text and images) and syncs with the server.
+## One-Command Docker Relay
 
-### Supported Clipboard Content
+Run the third-party HTTP relay on a server:
 
-- ✅ Plain text
-- ✅ Images (PNG, JPEG, and other formats, internally converted to PNG)
-- ⏳ Future support may include: files, rich text, etc.
+```bash
+printf "COPI_TOKEN=%s\n" "$(openssl rand -hex 16)" > .env && docker compose up -d
+```
 
-## How It Works
+The relay exposes port `9527` by default. Clients connect to that address:
 
-1. **Server Side**:
-   - Listens on a specified port for client connections
-   - Monitors local clipboard changes
-   - Receives clipboard content from clients
+```bash
+copi client --server http://SERVER_IP:9527 --token YOUR_TOKEN
+```
 
-2. **Client Side**:
-   - Connects to the server
-   - Monitors local clipboard changes and sends them to the server
-   - Receives clipboard content pushed by the server
-   - Automatically updates the local clipboard
+See [docs/DOCKER.md](docs/DOCKER.md) for more Docker options.
 
-3. **Deduplication Mechanism**:
-   - Uses SHA-256 hash values to track clipboard content
-   - Avoids redundant synchronization of identical content
+Run tests:
+
+```bash
+go test ./...
+```
+
+## Commands
+
+```text
+copi server [--addr 0.0.0.0:9527] [--token secret]
+copi relay [--addr 0.0.0.0:9527] [--token secret]
+copi client --server http://host:9527 [--token secret]
+copi lan [--listen 0.0.0.0:9528] [--token secret]
+copi status [--json]
+copi version
+```
+
+## Native Client Direction
+
+The Go CLI core owns protocol, sync, discovery, and server behavior. Native clients should first wrap the CLI instead of reimplementing sync. Use `copi status --json` for machine-readable feature detection; do not parse human logs as an API.
+
+- macOS: SwiftUI + NSPasteboard
+- Windows: WinUI 3 + C#/.NET is the recommended native stack; WPF + .NET is also practical for tray/background-first apps
+- Linux: GTK/libadwaita or Qt with Wayland/X11 clipboard backends
+- iOS/iPadOS: SwiftUI + UIPasteboard
+- Android: Kotlin + Jetpack Compose + ClipboardManager
 
 ## Architecture
 
+```text
+cmd/copi/                 CLI entrypoint and cross-platform sync engine
+internal/protocol/        Clipboard message protocol
+internal/server/          Third-party HTTP relay service
+internal/client/          Server-mode client sync loop
+internal/lan/             LAN discovery and peer sync
+internal/clipboard/       System clipboard adapters
+internal/config/          Device ID and local config
 ```
-src/
-├── main.rs                 # Main program entry and CLI handling
-└── modules/
-    ├── mod.rs             # Module declarations
-    ├── clipboard.rs       # Clipboard monitoring module
-    └── sync.rs            # Network synchronization module
-```
 
-## Dependencies
+Protocol endpoints:
 
-- `arboard` - Cross-platform clipboard access (supports text and images)
-- `tokio` - Async runtime
-- `serde` / `serde_json` - Serialization and deserialization
-- `anyhow` - Error handling
-- `clap` - Command-line argument parsing
-- `sha2` - SHA-256 hash computation
-- `base64` - Image data encoding
-- `image` - Image processing and format conversion
+- `POST /v1/clipboard` publishes clipboard content
+- `GET /v1/clipboard?since=<seq>&wait=30s` long-polls for the newest clipboard content
+- `GET /health` checks service health
 
-## Security Considerations
+## Security
 
-- The current implementation transmits clipboard content in plain text
-- Recommended for use in trusted network environments
-- Future versions may add TLS/SSL encryption support
+Copi currently supports an optional shared token. Clipboard data is still sent over plain HTTP, so use it on trusted networks or servers you control. TLS, pairing codes, device authorization, and end-to-end encryption are good next steps.
 
 ## License
 
 MIT License
-
-## Contributing
-
-Issues and Pull Requests are welcome!
-

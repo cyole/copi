@@ -1,0 +1,45 @@
+# Native Clients
+
+Copi's Go CLI is the shared sync engine. Native clients should be thin shells around it: UI, tray/menu-bar behavior, settings, startup integration, notifications, and platform packaging stay native; sync logic stays in the CLI.
+
+The native shell should launch and supervise the CLI instead of reimplementing sync.
+
+## Shell Contract
+
+Native apps should treat the CLI as the product core:
+
+- run `copi status --json` to detect version, commands, and capabilities
+- run `copi client --server <url> --token <token>` for server mode
+- run `copi lan --token <token>` for LAN mode
+- run `copi relay` only on third-party relay machines, usually through Docker
+- store user settings in the native app, then pass them to the CLI as flags or environment variables
+- show native status UI by supervising the child process and calling health/status commands
+
+Do not parse human log lines as an API. Anything the shell needs should become a stable JSON command in the CLI.
+
+## Recommended Stacks
+
+- macOS: SwiftUI + NSPasteboard
+- Windows: WinUI 3 + C#/.NET
+- Linux: GTK/libadwaita or Qt with Wayland/X11 clipboard support
+- iOS/iPadOS: SwiftUI + UIPasteboard
+- Android: Kotlin + Jetpack Compose + ClipboardManager
+
+## Windows Choice
+
+For Windows, start with WinUI 3 + C#/.NET. It is the most natural fit for a modern native Windows app with settings pages, notifications, tray/background behavior, startup tasks, and access to Windows platform APIs.
+
+WPF + .NET is still a good fallback if the first Windows client should be tray-first and very small. Avoid web-wrapped UI for the first native Windows app unless the product direction changes.
+
+## First Native Client Milestone
+
+Each native client should start as a small settings shell:
+
+- choose server mode or LAN mode
+- configure the third-party relay URL and token for server mode
+- show local device name and device ID
+- start/stop the Go sync daemon
+- enable launch at login/startup
+- show current connection and peer status
+
+The first implementation should run the Go CLI as a child process. Later, if a platform truly needs deeper integration, it can embed the Go core or reimplement the protocol, but that should not be the default path.

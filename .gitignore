@@ -1,7 +1,12 @@
-# Rust
+# Go
+/bin
+/dist
+*.test
+*.out
+coverage.txt
+
+# Legacy local build artifacts
 /target
-*.rs.bk
-*.pdb
 
 # Release artifacts
 *.tar.gz
@@ -14,6 +19,7 @@ release_notes.md
 *.swo
 *~
 .DS_Store
+.env
 
 # Backup files
 *.bak

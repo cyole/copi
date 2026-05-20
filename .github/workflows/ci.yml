@@ -6,40 +6,23 @@ on:
   pull_request:
     branches: [ main, develop ]
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  check:
-    name: Check
+  test:
+    name: Go test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb-shape0-dev libxcb-xfixes0-dev
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Cache cargo & target directories
-        uses: Swatinem/rust-cache@v2
-      
-      - name: Check
-        run: cargo check --all-features
 
-  fmt:
-    name: Rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
         with:
-          components: rustfmt
-      
+          go-version-file: go.mod
+          cache: true
+
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: test -z "$(gofmt -l .)"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build ./cmd/copi

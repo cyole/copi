@@ -1,0 +1,11 @@
+.git
+.github
+target
+bin
+dist
+*.tar.gz
+*.zip
+*.test
+*.out
+coverage.txt
+.DS_Store
