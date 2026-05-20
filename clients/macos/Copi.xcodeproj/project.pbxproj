@@ -17,6 +17,7 @@
 		A00000000000000000000108 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001008 /* SettingsStore.swift */; };
 		A00000000000000000000109 /* CopiProcessController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001009 /* CopiProcessController.swift */; };
 		A00000000000000000000113 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001013 /* SettingsView.swift */; };
+		A00000000000000000000115 /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001015 /* LogsView.swift */; };
 		A00000000000000000000116 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000001016 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -31,6 +32,7 @@
 		A00000000000000000001008 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		A00000000000000000001009 /* CopiProcessController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CopiProcessController.swift; sourceTree = "<group>"; };
 		A00000000000000000001013 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A00000000000000000001015 /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
 		A00000000000000000001016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A00000000000000000001017 /* Copi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Copi.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -123,6 +125,7 @@
 		A00000000000000000000016 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				A00000000000000000001015 /* LogsView.swift */,
 				A00000000000000000001013 /* SettingsView.swift */,
 			);
 			path = Views;
@@ -238,6 +241,7 @@
 				A00000000000000000000105 /* ProcessStatus.swift in Sources */,
 				A00000000000000000000106 /* SecretGenerator.swift in Sources */,
 				A00000000000000000000113 /* SettingsView.swift in Sources */,
+				A00000000000000000000115 /* LogsView.swift in Sources */,
 				A00000000000000000000108 /* SettingsStore.swift in Sources */,
 				A00000000000000000000102 /* SyncMode.swift in Sources */,
 			);

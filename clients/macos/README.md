@@ -45,6 +45,7 @@ Useful modes:
 - generate a LAN sync key
 - start and stop `copi client`
 - show process status from the menu bar
+- open a dedicated log window from the menu bar
 
 All settings live in the app's Settings window, opened from the menu bar item.
 

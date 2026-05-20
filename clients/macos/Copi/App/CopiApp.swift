@@ -17,12 +17,18 @@ struct CopiApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        Settings {
+        Window("设置", id: "settings") {
             SettingsView()
                 .environmentObject(settings)
                 .environmentObject(processController)
                 .frame(width: 560, height: 420)
                 .padding()
+        }
+
+        Window("日志", id: "logs") {
+            LogsView()
+                .environmentObject(processController)
+                .frame(minWidth: 680, minHeight: 420)
         }
     }
 }
@@ -34,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 private struct MenuBarContentView: View {
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var processController: CopiProcessController
 
@@ -44,12 +51,6 @@ private struct MenuBarContentView: View {
         Text(settings.mode.title)
             .foregroundStyle(.secondary)
 
-        if let event = processController.lastEvent {
-            Divider()
-            Text(event.message)
-                .lineLimit(2)
-        }
-
         Divider()
 
         Button {
@@ -59,7 +60,15 @@ private struct MenuBarContentView: View {
         }
         .disabled(!canToggle)
 
-        SettingsLink {
+        Button {
+            openAndFocusWindow(id: "logs", title: "日志")
+        } label: {
+            Label("日志...", systemImage: "doc.text.magnifyingglass")
+        }
+
+        Button {
+            openAndFocusWindow(id: "settings", title: "设置")
+        } label: {
             Label("设置...", systemImage: "gearshape")
         }
 
@@ -84,5 +93,28 @@ private struct MenuBarContentView: View {
         } else {
             processController.start(settings: settings.snapshot())
         }
+    }
+
+    private func openAndFocusWindow(id: String, title: String) {
+        openWindow(id: id)
+        focusWindow(title: title)
+    }
+
+    private func focusWindow(title: String) {
+        DispatchQueue.main.async {
+            bringWindowToFront(title: title)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            bringWindowToFront(title: title)
+        }
+    }
+
+    private func bringWindowToFront(title: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        guard let window = NSApp.windows.first(where: { $0.title == title }) else {
+            return
+        }
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 }
