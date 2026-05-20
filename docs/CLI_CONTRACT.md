@@ -22,6 +22,15 @@ Show the resolved config, including defaults:
 copi config show
 ```
 
+Read or write a single config key:
+
+```bash
+copi config get client.server_url
+copi config set client.server_url http://127.0.0.1:9527
+copi config set token replace-this
+copi config set log_format json
+```
+
 Use a custom config file:
 
 ```bash
@@ -59,6 +68,40 @@ Example config:
     "interval": "500ms"
   }
 }
+```
+
+Supported `config get/set` keys:
+
+- `token`
+- `log_format`
+- `device.id`
+- `device.name`
+- `relay.addr`
+- `client.server_url`
+- `client.interval`
+- `client.long_poll_wait`
+- `lan.listen_addr`
+- `lan.advertise_url`
+- `lan.multicast_addr`
+- `lan.interval`
+
+## Doctor
+
+Run diagnostic checks:
+
+```bash
+copi doctor --json
+copi doctor --mode client --server http://127.0.0.1:9527 --json
+copi doctor --mode lan --json
+copi doctor --mode relay --json
+```
+
+`doctor` checks config parsing, token presence, log format, durations, relay reachability, LAN listen address availability, multicast address validity, and optional clipboard read access.
+
+Clipboard access is skipped by default to avoid surprising platform prompts. Enable it explicitly:
+
+```bash
+copi doctor --clipboard --json
 ```
 
 ## JSON Logs

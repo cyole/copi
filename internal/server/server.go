@@ -86,6 +86,10 @@ func (s *Server) routes() http.Handler {
 	return mux
 }
 
+func (s *Server) Handler() http.Handler {
+	return s.routes()
+}
+
 func (s *Server) handleClipboard(w http.ResponseWriter, r *http.Request) {
 	if !Authorized(r, s.opts.Token) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

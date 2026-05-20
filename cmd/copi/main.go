@@ -14,6 +14,7 @@ import (
 	"github.com/cyole/copi/internal/client"
 	"github.com/cyole/copi/internal/clipboard"
 	"github.com/cyole/copi/internal/config"
+	"github.com/cyole/copi/internal/doctor"
 	"github.com/cyole/copi/internal/eventlog"
 	"github.com/cyole/copi/internal/lan"
 	"github.com/cyole/copi/internal/server"
@@ -44,6 +45,8 @@ func main() {
 		err = runStatus(os.Args[2:])
 	case "config":
 		err = runConfig(os.Args[2:])
+	case "doctor":
+		err = runDoctor(ctx, os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -241,7 +244,7 @@ func commandLogger(rawFormat string) (*eventlog.Logger, error) {
 
 func runConfig(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("config requires a subcommand: path, init, or show")
+		return fmt.Errorf("config requires a subcommand: path, init, show, get, or set")
 	}
 
 	switch args[0] {
@@ -290,8 +293,103 @@ func runConfig(args []string) error {
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(output)
+	case "get":
+		fs := flag.NewFlagSet("config get", flag.ExitOnError)
+		configPath := fs.String("config", "", "config file path")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 1 {
+			return fmt.Errorf("config get requires exactly one key")
+		}
+		cfg, _, err := config.Load(*configPath)
+		if err != nil {
+			return err
+		}
+		value, err := config.Get(cfg, fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		fmt.Println(value)
+		return nil
+	case "set":
+		fs := flag.NewFlagSet("config set", flag.ExitOnError)
+		configPath := fs.String("config", "", "config file path")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 2 {
+			return fmt.Errorf("config set requires a key and value")
+		}
+		cfg, _, err := config.Load(*configPath)
+		if err != nil {
+			return err
+		}
+		if err := config.Set(&cfg, fs.Arg(0), fs.Arg(1)); err != nil {
+			return err
+		}
+		resolved, err := config.Save(*configPath, cfg)
+		if err != nil {
+			return err
+		}
+		fmt.Println(resolved)
+		return nil
 	default:
 		return fmt.Errorf("unknown config subcommand: %s", args[0])
+	}
+}
+
+func runDoctor(ctx context.Context, args []string) error {
+	cfg, configPath, err := loadConfig(args)
+	if err != nil {
+		return err
+	}
+	timeoutDefault, err := durationFrom("3s", "doctor timeout")
+	if err != nil {
+		return err
+	}
+
+	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+	_ = fs.String("config", configPath, "config file path")
+	asJSON := fs.Bool("json", false, "print machine-readable JSON")
+	mode := fs.String("mode", "all", "doctor mode: all, relay, client, or lan")
+	serverURL := fs.String("server", envOr("COPI_SERVER_URL", cfg.Client.ServerURL), "relay URL to check")
+	timeout := fs.Duration("timeout", timeoutDefault, "network check timeout")
+	checkClipboard := fs.Bool("clipboard", false, "check clipboard read access")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	report := doctor.Run(ctx, doctor.Options{
+		ConfigPath:     configPath,
+		Config:         cfg,
+		Mode:           *mode,
+		ServerURL:      *serverURL,
+		Timeout:        *timeout,
+		CheckClipboard: *checkClipboard,
+		Clipboard:      clipboard.NewSystem(),
+	})
+
+	if *asJSON {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(report); err != nil {
+			return err
+		}
+	} else {
+		printDoctorText(report)
+	}
+
+	if !report.OK {
+		return fmt.Errorf("doctor found %d failing check(s)", report.Summary.Fail)
+	}
+	return nil
+}
+
+func printDoctorText(report doctor.Report) {
+	fmt.Printf("copi doctor: mode=%s ok=%v\n", report.Mode, report.OK)
+	for _, check := range report.Checks {
+		fmt.Printf("[%s] %s: %s\n", check.Status, check.Name, check.Message)
 	}
 }
 
@@ -312,6 +410,7 @@ func runStatus(args []string) error {
 			"client",
 			"lan",
 			"config",
+			"doctor",
 			"status",
 			"version",
 		},
@@ -327,6 +426,7 @@ func runStatus(args []string) error {
 			"rich_text_clipboard": false,
 			"docker_relay":        true,
 			"file_config":         true,
+			"doctor":              true,
 			"json_logs":           true,
 			"lan_discovery":       true,
 		},
@@ -340,8 +440,8 @@ func runStatus(args []string) error {
 
 	fmt.Println("copi", version)
 	fmt.Println("kind: core-cli")
-	fmt.Println("commands: relay, server, client, lan, config, status, version")
-	fmt.Println("capabilities: text_clipboard, docker_relay, file_config, json_logs, lan_discovery")
+	fmt.Println("commands: relay, server, client, lan, config, doctor, status, version")
+	fmt.Println("capabilities: text_clipboard, docker_relay, doctor, file_config, json_logs, lan_discovery")
 	return nil
 }
 
@@ -361,7 +461,8 @@ Usage:
   copi relay [--addr 0.0.0.0:9527] [--token secret] [--log-format text|json]
   copi client --server http://host:9527 [--token secret] [--log-format text|json]
   copi lan [--listen 0.0.0.0:9528] [--token secret] [--log-format text|json]
-  copi config path|init|show
+  copi config path|init|show|get|set
+  copi doctor [--json] [--mode all|relay|client|lan]
   copi status [--json]
   copi version
 
@@ -371,6 +472,7 @@ Modes:
   client   Device-side clipboard client. Fill in the relay URL and it can sync.
   lan      Zero-config LAN mode. Peers discover each other and sync clipboard text directly.
   config   Manage the CLI config file used by native shells.
+  doctor   Diagnose config, relay, LAN, and optional clipboard access.
   status   Machine-readable capabilities for native app shells.
 
 `, version)

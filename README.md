@@ -91,6 +91,15 @@ Config commands:
 copi config init
 copi config show
 copi config path
+copi config get client.server_url
+copi config set client.server_url http://SERVER_IP:9527
+```
+
+Diagnostic commands:
+
+```bash
+copi doctor --json
+copi doctor --mode client --server http://SERVER_IP:9527 --json
 ```
 
 Long-running commands support structured logs for native shells:

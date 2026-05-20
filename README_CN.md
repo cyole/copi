@@ -91,6 +91,15 @@ copi version
 copi config init
 copi config show
 copi config path
+copi config get client.server_url
+copi config set client.server_url http://服务器IP:9527
+```
+
+诊断入口：
+
+```bash
+copi doctor --json
+copi doctor --mode client --server http://服务器IP:9527 --json
 ```
 
 长运行命令支持结构化日志，给原生壳监听：

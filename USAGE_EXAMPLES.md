@@ -17,6 +17,15 @@ Create and inspect a config file:
 ```bash
 ./bin/copi config init
 ./bin/copi config show
+./bin/copi config set client.server_url http://192.168.1.10:9527
+./bin/copi config get client.server_url
+```
+
+Run diagnostics:
+
+```bash
+./bin/copi doctor --json
+./bin/copi doctor --mode client --server http://192.168.1.10:9527 --json
 ```
 
 Run with JSON logs for a native shell:
