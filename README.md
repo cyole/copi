@@ -9,7 +9,6 @@ The CLI has clear boundaries:
 - `copi relay` runs the third-party HTTP relay service.
 - `copi client --relay ...` runs a real device client through that relay.
 - `copi client --lan` runs a real device client with LAN discovery.
-- `copi config` shows or edits configuration.
 - `copi doctor` diagnoses setup.
 - `copi version` prints version and capabilities.
 
@@ -60,22 +59,6 @@ copi client --relay http://SERVER_IP:9527 --token YOUR_TOKEN
 
 See [docs/DOCKER.md](docs/DOCKER.md) for more Docker options.
 
-## Config
-
-Show resolved config:
-
-```bash
-copi config
-```
-
-Set config values:
-
-```bash
-copi config set client.relay_url http://SERVER_IP:9527
-copi config set token YOUR_TOKEN
-copi config set log_format json
-```
-
 ## Doctor
 
 ```bash
@@ -98,8 +81,6 @@ go test ./...
 copi relay [--addr 0.0.0.0:9527] [--token secret] [--log-format text|json]
 copi client --relay http://host:9527 [--token secret] [--log-format text|json]
 copi client --lan [--listen 0.0.0.0:9528] [--token secret] [--log-format text|json]
-copi config [--config path]
-copi config set [--config path] <key> <value>
 copi doctor [--json] [--mode all|relay|client|lan]
 copi version [--json]
 ```

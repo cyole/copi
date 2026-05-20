@@ -8,34 +8,13 @@ Native clients should treat `copi` as the shared sync engine. The shell-facing i
 copi relay
 copi client --relay <url>
 copi client --lan
-copi config
-copi config set <key> <value>
 copi doctor
 copi version
 ```
 
-## Configuration
+## Runtime Inputs
 
-Show resolved config:
-
-```bash
-copi config
-```
-
-Use a custom config file:
-
-```bash
-copi config --config ./copi.json
-copi client --config ./copi.json --relay http://127.0.0.1:9527
-```
-
-Set values:
-
-```bash
-copi config set client.relay_url http://127.0.0.1:9527
-copi config set token replace-this
-copi config set log_format json
-```
+Native shells should prefer flags and environment variables. The CLI can read an existing JSON file with `--config`, but it does not expose commands to create or edit config files.
 
 Precedence is:
 
@@ -44,20 +23,11 @@ Precedence is:
 3. Config file
 4. Built-in defaults
 
-Supported config keys:
+Example:
 
-- `token`
-- `log_format`
-- `device.id`
-- `device.name`
-- `relay.addr`
-- `client.relay_url`
-- `client.interval`
-- `client.long_poll_wait`
-- `lan.listen_addr`
-- `lan.advertise_url`
-- `lan.multicast_addr`
-- `lan.interval`
+```bash
+copi client --config ./copi.json --relay http://127.0.0.1:9527
+```
 
 ## Doctor
 

@@ -43,15 +43,6 @@ If a machine advertises the wrong address:
   --token my-secret
 ```
 
-## Config
-
-```bash
-./bin/copi config
-./bin/copi config set client.relay_url http://192.168.1.10:9527
-./bin/copi config set token my-secret
-./bin/copi config set log_format json
-```
-
 ## Diagnostics
 
 ```bash

@@ -9,7 +9,6 @@ Copi 是一个用 Go 写的剪贴板同步 CLI 内核。目标很简单：一台
 - `copi relay` 跑第三方 HTTP 中转服务。
 - `copi client --relay ...` 让真实设备通过中转服务同步。
 - `copi client --lan` 让真实设备通过局域网自动发现同步。
-- `copi config` 查看或修改配置。
 - `copi doctor` 做诊断。
 - `copi version` 查看版本和能力。
 
@@ -58,22 +57,6 @@ copi client --relay http://服务器IP:9527 --token 你的TOKEN
 
 更多 Docker 配置见 [docs/DOCKER.md](docs/DOCKER.md)。
 
-## 配置
-
-查看解析后的配置：
-
-```bash
-copi config
-```
-
-写配置：
-
-```bash
-copi config set client.relay_url http://服务器IP:9527
-copi config set token 你的TOKEN
-copi config set log_format json
-```
-
 ## 诊断
 
 ```bash
@@ -96,8 +79,6 @@ go test ./...
 copi relay [--addr 0.0.0.0:9527] [--token secret] [--log-format text|json]
 copi client --relay http://host:9527 [--token secret] [--log-format text|json]
 copi client --lan [--listen 0.0.0.0:9528] [--token secret] [--log-format text|json]
-copi config [--config path]
-copi config set [--config path] <key> <value>
 copi doctor [--json] [--mode all|relay|client|lan]
 copi version [--json]
 ```

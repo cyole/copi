@@ -39,8 +39,6 @@ func main() {
 		err = runClient(ctx, os.Args[2:])
 	case "version":
 		err = runVersion(os.Args[2:])
-	case "config":
-		err = runConfig(os.Args[2:])
 	case "doctor":
 		err = runDoctor(ctx, os.Args[2:])
 	case "-h", "--help", "help":
@@ -268,55 +266,6 @@ func commandLogger(rawFormat string) (*eventlog.Logger, error) {
 	return eventlog.New(os.Stdout, format), nil
 }
 
-func runConfig(args []string) error {
-	if len(args) > 0 && args[0] == "set" {
-		fs := flag.NewFlagSet("config set", flag.ExitOnError)
-		configPath := fs.String("config", "", "config file path")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		if fs.NArg() != 2 {
-			return fmt.Errorf("config set requires a key and value")
-		}
-		cfg, _, err := config.Load(*configPath)
-		if err != nil {
-			return err
-		}
-		if err := config.Set(&cfg, fs.Arg(0), fs.Arg(1)); err != nil {
-			return err
-		}
-		resolved, err := config.Save(*configPath, cfg)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("updated %s\n", resolved)
-		return nil
-	}
-
-	fs := flag.NewFlagSet("config", flag.ExitOnError)
-	configPath := fs.String("config", "", "config file path")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("unknown config subcommand: %s", fs.Arg(0))
-	}
-	cfg, resolved, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-	output := struct {
-		Path   string        `json:"path"`
-		Config config.Config `json:"config"`
-	}{
-		Path:   resolved,
-		Config: cfg,
-	}
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(output)
-}
-
 func runDoctor(ctx context.Context, args []string) error {
 	cfg, configPath, err := loadConfig(args)
 	if err != nil {
@@ -385,7 +334,6 @@ func runVersion(args []string) error {
 		"commands": []string{
 			"relay",
 			"client",
-			"config",
 			"doctor",
 			"version",
 		},
@@ -395,7 +343,6 @@ func runVersion(args []string) error {
 			"file_clipboard":      false,
 			"rich_text_clipboard": false,
 			"docker_relay":        true,
-			"file_config":         true,
 			"doctor":              true,
 			"json_logs":           true,
 			"lan_discovery":       true,
@@ -427,16 +374,13 @@ Usage:
   copi relay [--addr 0.0.0.0:9527] [--token secret] [--log-format text|json]
   copi client --relay http://host:9527 [--token secret] [--log-format text|json]
   copi client --lan [--listen 0.0.0.0:9528] [--token secret] [--log-format text|json]
-  copi config [--config path]
-  copi config set [--config path] <key> <value>
   copi doctor [--json] [--mode all|relay|client|lan]
   copi version [--json]
 
 Commands:
   relay    Third-party HTTP service. It never touches the local clipboard.
   client   Device-side sync through a relay URL, or LAN sync with --lan.
-  config   Show or edit the CLI config file used by native shells.
-  doctor   Diagnose config, relay, LAN, and optional clipboard access.
+  doctor   Diagnose relay, LAN, and optional clipboard access.
   version  Print version and machine-readable capabilities.
 
 `, version)
