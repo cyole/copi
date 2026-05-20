@@ -5,6 +5,8 @@ import SwiftUI
 final class AppWindowController: ObservableObject {
     private var settingsWindow: NSWindow?
     private var logsWindow: NSWindow?
+    private var didCenterSettingsWindow = false
+    private var didCenterLogsWindow = false
 
     func showSettings(settings: SettingsStore, processController: CopiProcessController) {
         if settingsWindow == nil {
@@ -21,7 +23,8 @@ final class AppWindowController: ObservableObject {
             )
         }
 
-        show(settingsWindow)
+        show(settingsWindow, centerOnFirstShow: !didCenterSettingsWindow)
+        didCenterSettingsWindow = true
     }
 
     func showLogs(processController: CopiProcessController) {
@@ -37,7 +40,8 @@ final class AppWindowController: ObservableObject {
             )
         }
 
-        show(logsWindow)
+        show(logsWindow, centerOnFirstShow: !didCenterLogsWindow)
+        didCenterLogsWindow = true
     }
 
     private func makeWindow<Content: View>(title: String, size: NSSize, rootView: Content) -> NSWindow {
@@ -51,30 +55,33 @@ final class AppWindowController: ObservableObject {
         window.contentViewController = NSHostingController(rootView: rootView)
         window.isReleasedWhenClosed = false
         window.collectionBehavior = [.managed, .moveToActiveSpace]
-        center(window, on: presentationScreen())
         return window
     }
 
-    private func show(_ window: NSWindow?) {
+    private func show(_ window: NSWindow?, centerOnFirstShow: Bool) {
         guard let window else {
             return
         }
 
         bringToFront(window)
         DispatchQueue.main.async { [weak self, weak window] in
-            self?.bringToFront(window)
+            self?.bringToFront(window, shouldCenter: centerOnFirstShow)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self, weak window] in
-            self?.bringToFront(window)
+            self?.bringToFront(window, shouldCenter: centerOnFirstShow)
         }
     }
 
-    private func bringToFront(_ window: NSWindow?) {
+    private func bringToFront(_ window: NSWindow?, shouldCenter: Bool = false) {
         guard let window else {
             return
         }
 
         NSApp.activate(ignoringOtherApps: true)
+        if shouldCenter {
+            window.contentView?.layoutSubtreeIfNeeded()
+            center(window, on: presentationScreen())
+        }
         window.deminiaturize(nil)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
