@@ -46,6 +46,7 @@ Useful modes:
 - start and stop `copi client`
 - show process status from the menu bar
 - open a dedicated log window from the menu bar
+- enable launch at login from Settings, default off
 
 All settings live in the app's Settings window, opened from the menu bar item.
 

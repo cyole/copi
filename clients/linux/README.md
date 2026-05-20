@@ -49,7 +49,7 @@ COPI_CLI=/path/to/copi ./clients/linux/run.sh --no-build
 - local device name and device ID generation
 - child-process supervision for `copi client`
 - JSON log display in a dedicated log window
-- optional autostart via `~/.config/autostart/com.cyole.copi.desktop`
+- optional autostart from Settings, default off, via `~/.config/autostart/com.cyole.copi.desktop`
 
 Settings are stored at:
 

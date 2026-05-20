@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import ServiceManagement
 
 @MainActor
 final class SettingsStore: ObservableObject {
@@ -11,6 +12,7 @@ final class SettingsStore: ObservableObject {
         static let relayURL = "relayURL"
         static let accessToken = "accessToken"
         static let syncKey = "syncKey"
+        static let launchAtLogin = "launchAtLogin"
     }
 
     private let defaults: UserDefaults
@@ -22,6 +24,13 @@ final class SettingsStore: ObservableObject {
     @Published var relayURL: String { didSet { save() } }
     @Published var accessToken: String { didSet { save() } }
     @Published var syncKey: String { didSet { save() } }
+    @Published var launchAtLogin: Bool {
+        didSet {
+            save()
+            applyLaunchAtLogin()
+        }
+    }
+    @Published private(set) var launchAtLoginError: String?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -32,6 +41,7 @@ final class SettingsStore: ObservableObject {
         self.relayURL = defaults.string(forKey: Keys.relayURL) ?? "http://127.0.0.1:9527"
         self.accessToken = defaults.string(forKey: Keys.accessToken) ?? ""
         self.syncKey = defaults.string(forKey: Keys.syncKey) ?? SecretGenerator.syncKey()
+        self.launchAtLogin = defaults.bool(forKey: Keys.launchAtLogin)
     }
 
     func snapshot() -> ClientSettings {
@@ -62,5 +72,23 @@ final class SettingsStore: ObservableObject {
         defaults.set(relayURL, forKey: Keys.relayURL)
         defaults.set(accessToken, forKey: Keys.accessToken)
         defaults.set(syncKey, forKey: Keys.syncKey)
+        defaults.set(launchAtLogin, forKey: Keys.launchAtLogin)
+    }
+
+    private func applyLaunchAtLogin() {
+        do {
+            if launchAtLogin {
+                if SMAppService.mainApp.status != .enabled {
+                    try SMAppService.mainApp.register()
+                }
+            } else {
+                if SMAppService.mainApp.status == .enabled {
+                    try SMAppService.mainApp.unregister()
+                }
+            }
+            launchAtLoginError = nil
+        } catch {
+            launchAtLoginError = error.localizedDescription
+        }
     }
 }

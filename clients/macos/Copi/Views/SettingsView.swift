@@ -48,6 +48,7 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    .disabled(processController.isRunning)
 
                     SettingsSection(title: "设备", systemImage: "macbook") {
                         SettingsRow(title: "名称") {
@@ -69,11 +70,26 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    .disabled(processController.isRunning)
 
+                    SettingsSection(title: "行为", systemImage: "power") {
+                        SettingsRow(title: "启动") {
+                            Toggle("登录后自动启动 Copi", isOn: $settings.launchAtLogin)
+                                .toggleStyle(.switch)
+                        }
+
+                        if let error = settings.launchAtLoginError {
+                            SettingsRow(title: "") {
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
                 }
                 .padding(22)
             }
-            .disabled(processController.isRunning)
         }
         .background(.regularMaterial)
     }
