@@ -107,9 +107,30 @@ struct SettingsView: View {
             }
 
             Spacer()
+
+            Button {
+                toggleProcess()
+            } label: {
+                Label(processController.isRunning ? "停止" : "启动", systemImage: processController.isRunning ? "stop.fill" : "play.fill")
+                    .frame(minWidth: 72)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canToggle)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 18)
+    }
+
+    private var canToggle: Bool {
+        processController.isRunning || (processController.status.canStart && settings.snapshot().isRunnable)
+    }
+
+    private func toggleProcess() {
+        if processController.isRunning {
+            processController.stop()
+        } else {
+            processController.start(settings: settings.snapshot())
+        }
     }
 
     private var statusDot: some View {
