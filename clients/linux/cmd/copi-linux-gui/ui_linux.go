@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -61,9 +62,10 @@ func newLinuxApp() (*linuxApp, error) {
 		settings = defaultSettings()
 	}
 
+	iconPath := prepareTrayIconPath(resolveIconPath())
 	app := &linuxApp{
 		settings: settings,
-		iconPath: resolveIconPath(),
+		iconPath: iconPath,
 	}
 	app.process = newProcessController(app)
 	app.installCSS()
@@ -556,8 +558,51 @@ func (a *linuxApp) refreshStatus() {
 	tooltip := fmt.Sprintf("%s · %s · %s", appName, status, a.settings.modeTitle())
 	if a.statusIcon != nil {
 		a.statusIcon.SetTooltipText(tooltip)
+		if iconPath := a.trayIconPath(); iconPath != "" {
+			a.statusIcon.SetIconFromFile(iconPath)
+		} else {
+			a.statusIcon.SetIconName("network-server-symbolic")
+		}
 	}
 	a.updateSettingsState()
+}
+
+func (a *linuxApp) trayIconPath() string {
+	if a.iconPath == "" {
+		return ""
+	}
+	switch a.process.status {
+	case statusStarting, statusRunning, statusStopping:
+		return trayIconVariantPath(a.iconPath, "running")
+	case statusFailed:
+		return trayIconVariantPath(a.iconPath, "error")
+	default:
+		return a.iconPath
+	}
+}
+
+func trayIconVariantPath(base, variant string) string {
+	if base == "" || variant == "" {
+		return base
+	}
+
+	dir := filepath.Dir(base)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(filepath.Base(base), ext)
+
+	candidates := make([]string, 0, 2)
+	if strings.HasSuffix(stem, "-symbolic") {
+		prefix := strings.TrimSuffix(stem, "-symbolic")
+		candidates = append(candidates, filepath.Join(dir, prefix+"-"+variant+"-symbolic"+ext))
+	}
+	candidates = append(candidates, filepath.Join(dir, stem+"-"+variant+ext))
+
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return base
 }
 
 func (a *linuxApp) updateSettingsState() {

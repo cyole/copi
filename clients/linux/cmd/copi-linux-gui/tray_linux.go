@@ -6,6 +6,7 @@ package main
 #cgo pkg-config: ayatana-appindicator3-0.1
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <gtk/gtk.h>
 #include <libayatana-appindicator/app-indicator.h>
 
@@ -17,16 +18,49 @@ extern void copiTrayIconPopupMenu(uintptr_t id, guint button, guint32 activate_t
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
+static void copi_appindicator_log_handler(const gchar *log_domain,
+                                          GLogLevelFlags log_level,
+                                          const gchar *message,
+                                          gpointer user_data) {
+	if (message != NULL && strstr(message, "libayatana-appindicator is deprecated") != NULL) {
+		return;
+	}
+	g_log_default_handler(log_domain, log_level, message, user_data);
+}
+
+static void copi_silence_appindicator_deprecation_warning(void) {
+	static gboolean installed = FALSE;
+	if (installed) {
+		return;
+	}
+	installed = TRUE;
+	g_log_set_handler("libayatana-appindicator",
+	                  G_LOG_LEVEL_WARNING,
+	                  copi_appindicator_log_handler,
+	                  NULL);
+}
+
 static AppIndicator *copi_tray_icon_new_from_icon_name(const char *id, const char *icon_name) {
+	copi_silence_appindicator_deprecation_warning();
 	return app_indicator_new(id, icon_name, APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
 }
 
 static AppIndicator *copi_tray_icon_new_with_path(const char *id, const char *icon_name, const char *icon_path) {
+	copi_silence_appindicator_deprecation_warning();
 	return app_indicator_new_with_path(id, icon_name, APP_INDICATOR_CATEGORY_APPLICATION_STATUS, icon_path);
 }
 
 static void copi_tray_icon_set_title(AppIndicator *icon, const char *title) {
 	app_indicator_set_title(icon, title);
+}
+
+static void copi_tray_icon_set_icon_name(AppIndicator *icon, const char *icon_name) {
+	app_indicator_set_icon_full(icon, icon_name, "Copi");
+}
+
+static void copi_tray_icon_set_icon_with_path(AppIndicator *icon, const char *icon_name, const char *icon_path) {
+	app_indicator_set_icon_theme_path(icon, icon_path);
+	app_indicator_set_icon_full(icon, icon_name, "Copi");
 }
 
 static void copi_tray_icon_set_visible(AppIndicator *icon, gboolean visible) {
@@ -69,6 +103,14 @@ static GtkStatusIcon *copi_status_icon_new_from_file(const char *filename, char 
 
 static void copi_status_icon_set_title(GtkStatusIcon *icon, const char *title) {
 	gtk_status_icon_set_title(icon, title);
+}
+
+static void copi_status_icon_set_from_icon_name(GtkStatusIcon *icon, const char *icon_name) {
+	gtk_status_icon_set_from_icon_name(icon, icon_name);
+}
+
+static void copi_status_icon_set_from_file(GtkStatusIcon *icon, const char *filename) {
+	gtk_status_icon_set_from_file(icon, filename);
 }
 
 static void copi_status_icon_set_tooltip_text(GtkStatusIcon *icon, const char *text) {
@@ -174,6 +216,10 @@ func newTrayIconFromFile(filename string) (*trayIcon, error) {
 	return wrapTrayIcon(C.copi_tray_icon_new_with_path(cID, cIconName, cIconPath))
 }
 
+func trayIconNameAndPath(filename string) (string, string) {
+	return strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename)), filepath.Dir(filename)
+}
+
 func wrapTrayIcon(native *C.AppIndicator) (*trayIcon, error) {
 	if native == nil {
 		return nil, fmt.Errorf("create app indicator")
@@ -215,6 +261,36 @@ func (i *trayIcon) SetTitle(title string) {
 		C.copi_tray_icon_set_title(i.indicator, cTitle)
 	case trayKindStatusIcon:
 		C.copi_status_icon_set_title(i.statusIcon, cTitle)
+	}
+}
+
+func (i *trayIcon) SetIconName(iconName string) {
+	cIconName := C.CString(iconName)
+	defer C.free(unsafe.Pointer(cIconName))
+	switch i.kind {
+	case trayKindIndicator:
+		C.copi_tray_icon_set_icon_name(i.indicator, cIconName)
+	case trayKindStatusIcon:
+		C.copi_status_icon_set_from_icon_name(i.statusIcon, cIconName)
+	}
+}
+
+func (i *trayIcon) SetIconFromFile(filename string) {
+	if strings.TrimSpace(filename) == "" {
+		return
+	}
+	switch i.kind {
+	case trayKindIndicator:
+		iconName, iconPath := trayIconNameAndPath(filename)
+		cIconName := C.CString(iconName)
+		defer C.free(unsafe.Pointer(cIconName))
+		cIconPath := C.CString(iconPath)
+		defer C.free(unsafe.Pointer(cIconPath))
+		C.copi_tray_icon_set_icon_with_path(i.indicator, cIconName, cIconPath)
+	case trayKindStatusIcon:
+		cFilename := C.CString(filename)
+		defer C.free(unsafe.Pointer(cFilename))
+		C.copi_status_icon_set_from_file(i.statusIcon, cFilename)
 	}
 }
 

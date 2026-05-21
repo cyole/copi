@@ -44,6 +44,9 @@ go build -tags "$GUI_TAGS" -trimpath -ldflags="-s -w" -o "$STAGE/usr/bin/copi-li
 
 install -m 0644 "$LINUX_DIR/share/applications/com.cyole.copi.desktop" "$STAGE/usr/share/applications/com.cyole.copi.desktop"
 install -m 0644 "$LINUX_DIR/share/icons/hicolor/scalable/apps/com.cyole.copi.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/com.cyole.copi.svg"
+install -m 0644 "$LINUX_DIR/share/icons/hicolor/scalable/apps/copi-tray.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/copi-tray.svg"
+install -m 0644 "$LINUX_DIR/share/icons/hicolor/scalable/apps/copi-tray-running.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/copi-tray-running.svg"
+install -m 0644 "$LINUX_DIR/share/icons/hicolor/scalable/apps/copi-tray-error.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/copi-tray-error.svg"
 
 tar -C "$BUILD_DIR" -czf "$DIST_DIR/$PKG_NAME.tar.gz" "$PKG_NAME"
 echo "Wrote $DIST_DIR/$PKG_NAME.tar.gz"

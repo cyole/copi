@@ -35,5 +35,5 @@ else
 fi
 
 export COPI_CLI="${COPI_CLI:-$CLI_PATH}"
-export COPI_ICON="${COPI_ICON:-$LINUX_DIR/assets/com.cyole.copi-symbolic.svg}"
+export COPI_ICON="${COPI_ICON:-$LINUX_DIR/assets/copi-tray.svg}"
 exec "$GUI_PATH"

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -15,15 +16,16 @@ import (
 )
 
 const (
-	appID            = "com.cyole.copi"
-	appName          = "Copi"
-	configFileName   = "linux-gui.json"
-	defaultRelayURL  = "http://127.0.0.1:9527"
-	iconFileName     = "com.cyole.copi-symbolic.svg"
-	installedIcon    = "/usr/share/icons/hicolor/scalable/apps/com.cyole.copi.svg"
-	installedCLI     = "/usr/bin/copi"
-	installedGUI     = "/usr/bin/copi-linux-gui"
-	desktopEntryName = "com.cyole.copi.desktop"
+	appID             = "com.cyole.copi"
+	appName           = "Copi"
+	configFileName    = "linux-gui.json"
+	defaultRelayURL   = "http://127.0.0.1:9527"
+	iconFileName      = "copi-tray.svg"
+	installedTrayIcon = "/usr/share/icons/hicolor/scalable/apps/copi-tray.svg"
+	installedIcon     = "/usr/share/icons/hicolor/scalable/apps/com.cyole.copi.svg"
+	installedCLI      = "/usr/bin/copi"
+	installedGUI      = "/usr/bin/copi-linux-gui"
+	desktopEntryName  = "com.cyole.copi.desktop"
 )
 
 type syncMode string
@@ -167,6 +169,17 @@ func configHome() (string, error) {
 	return filepath.Join(home, ".config"), nil
 }
 
+func dataHome() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "share"), nil
+}
+
 func generateDeviceID() string {
 	return "linux-" + randomUUID()
 }
@@ -256,7 +269,9 @@ func resolveIconPath() string {
 	candidates := []string{
 		os.Getenv("COPI_ICON"),
 		filepath.Join(executableParentDir(), "assets", iconFileName),
+		filepath.Join(executableParentDir(), "share", "icons", "hicolor", "scalable", "apps", iconFileName),
 		filepath.Join(executableParentDir(), "share", "icons", "hicolor", "scalable", "apps", "com.cyole.copi.svg"),
+		installedTrayIcon,
 		installedIcon,
 		"/usr/share/pixmaps/com.cyole.copi.svg",
 	}
@@ -270,6 +285,67 @@ func resolveIconPath() string {
 		}
 	}
 	return ""
+}
+
+func prepareTrayIconPath(iconPath string) string {
+	if iconPath == "" || !runningWaylandSession() {
+		return iconPath
+	}
+	prepared, err := installUserTrayIconFiles(iconPath)
+	if err != nil {
+		return iconPath
+	}
+	return prepared
+}
+
+func installUserTrayIconFiles(base string) (string, error) {
+	dir, err := dataHome()
+	if err != nil {
+		return "", err
+	}
+	dstDir := filepath.Join(dir, "icons", "hicolor", "scalable", "apps")
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return "", err
+	}
+
+	sources := []string{
+		base,
+		trayIconVariantPath(base, "running"),
+		trayIconVariantPath(base, "error"),
+	}
+	seen := make(map[string]bool, len(sources))
+	baseDst := ""
+	for _, src := range sources {
+		if src == "" || seen[src] {
+			continue
+		}
+		seen[src] = true
+		dst := filepath.Join(dstDir, filepath.Base(src))
+		if err := copyIconFile(src, dst); err != nil {
+			if src == base {
+				return "", err
+			}
+			continue
+		}
+		if src == base {
+			baseDst = dst
+		}
+	}
+	if baseDst == "" {
+		return "", fmt.Errorf("prepare tray icon %s", base)
+	}
+	return baseDst, nil
+}
+
+func copyIconFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if existing, err := os.ReadFile(dst); err == nil && bytes.Equal(existing, data) {
+		return nil
+	}
+	return os.WriteFile(dst, data, 0o644)
 }
 
 func siblingPath(name string) string {
