@@ -84,7 +84,7 @@ func newLinuxApp() (*linuxApp, error) {
 }
 
 func (a *linuxApp) run() {
-	if a.statusIcon == nil || runningWaylandSession() {
+	if a.statusIcon == nil {
 		a.showSettings()
 		return
 	}
@@ -161,23 +161,20 @@ func (a *linuxApp) buildTray() error {
 	menu.Append(quitItem)
 	menu.ShowAll()
 
-	if runningWaylandSession() {
-		return nil
-	}
-
 	if a.iconPath == "" {
 		a.statusIcon = must(newTrayIconFromIconName("network-server-symbolic"))
 	} else {
 		a.statusIcon = must(newTrayIconFromFile(a.iconPath))
 	}
 	a.statusIcon.SetTitle(appName)
-	a.statusIcon.SetVisible(true)
 	a.statusIcon.ConnectActivate(func() {
 		a.showSettings()
 	})
 	a.statusIcon.ConnectPopupMenu(func(button uint, activateTime uint32) {
-		a.menu.PopupAtPointer(nil)
+		a.statusIcon.PopupMenu(a.menu, button, activateTime)
 	})
+	a.statusIcon.SetMenu(a.menu)
+	a.statusIcon.SetVisible(true)
 	return nil
 }
 

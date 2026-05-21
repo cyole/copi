@@ -3,10 +3,11 @@
 package main
 
 /*
-#cgo pkg-config: gtk+-3.0
+#cgo pkg-config: ayatana-appindicator3-0.1
 #include <stdint.h>
 #include <stdlib.h>
 #include <gtk/gtk.h>
+#include <libayatana-appindicator/app-indicator.h>
 
 extern void copiTrayIconActivate(uintptr_t id);
 extern void copiTrayIconPopupMenu(uintptr_t id, guint button, guint32 activate_time);
@@ -16,19 +17,39 @@ extern void copiTrayIconPopupMenu(uintptr_t id, guint button, guint32 activate_t
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
-static void copi_tray_icon_activate(GtkStatusIcon *icon, gpointer user_data) {
+static AppIndicator *copi_tray_icon_new_from_icon_name(const char *id, const char *icon_name) {
+	return app_indicator_new(id, icon_name, APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
+}
+
+static AppIndicator *copi_tray_icon_new_with_path(const char *id, const char *icon_name, const char *icon_path) {
+	return app_indicator_new_with_path(id, icon_name, APP_INDICATOR_CATEGORY_APPLICATION_STATUS, icon_path);
+}
+
+static void copi_tray_icon_set_title(AppIndicator *icon, const char *title) {
+	app_indicator_set_title(icon, title);
+}
+
+static void copi_tray_icon_set_visible(AppIndicator *icon, gboolean visible) {
+	app_indicator_set_status(icon, visible ? APP_INDICATOR_STATUS_ACTIVE : APP_INDICATOR_STATUS_PASSIVE);
+}
+
+static void copi_tray_icon_set_menu(AppIndicator *icon, uintptr_t menu) {
+	app_indicator_set_menu(icon, GTK_MENU((gpointer)menu));
+}
+
+static void copi_status_icon_activate(GtkStatusIcon *icon, gpointer user_data) {
 	copiTrayIconActivate((uintptr_t)user_data);
 }
 
-static void copi_tray_icon_popup_menu(GtkStatusIcon *icon, guint button, guint32 activate_time, gpointer user_data) {
+static void copi_status_icon_popup_menu(GtkStatusIcon *icon, guint button, guint32 activate_time, gpointer user_data) {
 	copiTrayIconPopupMenu((uintptr_t)user_data, button, activate_time);
 }
 
-static GtkStatusIcon *copi_tray_icon_new_from_icon_name(const char *icon_name) {
+static GtkStatusIcon *copi_status_icon_new_from_icon_name(const char *icon_name) {
 	return gtk_status_icon_new_from_icon_name(icon_name);
 }
 
-static GtkStatusIcon *copi_tray_icon_new_from_file(const char *filename, char **error_message) {
+static GtkStatusIcon *copi_status_icon_new_from_file(const char *filename, char **error_message) {
 	GError *err = NULL;
 	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_size(filename, 22, 22, &err);
 	if (pixbuf == NULL) {
@@ -46,28 +67,32 @@ static GtkStatusIcon *copi_tray_icon_new_from_file(const char *filename, char **
 	return icon;
 }
 
-static void copi_tray_icon_set_title(GtkStatusIcon *icon, const char *title) {
+static void copi_status_icon_set_title(GtkStatusIcon *icon, const char *title) {
 	gtk_status_icon_set_title(icon, title);
 }
 
-static void copi_tray_icon_set_tooltip_text(GtkStatusIcon *icon, const char *text) {
+static void copi_status_icon_set_tooltip_text(GtkStatusIcon *icon, const char *text) {
 	gtk_status_icon_set_tooltip_text(icon, text);
 }
 
-static void copi_tray_icon_set_visible(GtkStatusIcon *icon, gboolean visible) {
+static void copi_status_icon_set_visible(GtkStatusIcon *icon, gboolean visible) {
 	gtk_status_icon_set_visible(icon, visible);
 }
 
-static gboolean copi_tray_icon_is_embedded(GtkStatusIcon *icon) {
+static gboolean copi_status_icon_is_embedded(GtkStatusIcon *icon) {
 	return gtk_status_icon_is_embedded(icon);
 }
 
-static void copi_tray_icon_connect_activate(GtkStatusIcon *icon, uintptr_t id) {
-	g_signal_connect(icon, "activate", G_CALLBACK(copi_tray_icon_activate), (gpointer)id);
+static void copi_status_icon_connect_activate(GtkStatusIcon *icon, uintptr_t id) {
+	g_signal_connect(icon, "activate", G_CALLBACK(copi_status_icon_activate), (gpointer)id);
 }
 
-static void copi_tray_icon_connect_popup_menu(GtkStatusIcon *icon, uintptr_t id) {
-	g_signal_connect(icon, "popup-menu", G_CALLBACK(copi_tray_icon_popup_menu), (gpointer)id);
+static void copi_status_icon_connect_popup_menu(GtkStatusIcon *icon, uintptr_t id) {
+	g_signal_connect(icon, "popup-menu", G_CALLBACK(copi_status_icon_popup_menu), (gpointer)id);
+}
+
+static void copi_status_icon_popup_at_icon(GtkStatusIcon *icon, GtkMenu *menu, guint button, guint32 activate_time) {
+	gtk_menu_popup(menu, NULL, NULL, gtk_status_icon_position_menu, icon, button, activate_time);
 }
 
 #if defined(__GNUC__)
@@ -77,13 +102,26 @@ static void copi_tray_icon_connect_popup_menu(GtkStatusIcon *icon, uintptr_t id)
 import "C"
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 	"sync"
 	"unsafe"
+
+	"github.com/gotk3/gotk3/gtk"
+)
+
+type trayKind int
+
+const (
+	trayKindIndicator trayKind = iota
+	trayKindStatusIcon
 )
 
 type trayIcon struct {
 	id          uintptr
-	native      *C.GtkStatusIcon
+	kind        trayKind
+	indicator   *C.AppIndicator
+	statusIcon  *C.GtkStatusIcon
 	onActivate  func()
 	onPopupMenu func(button uint, activateTime uint32)
 }
@@ -97,30 +135,64 @@ var trayIcons = struct {
 }
 
 func newTrayIconFromIconName(iconName string) (*trayIcon, error) {
+	if !runningWaylandSession() {
+		cIconName := C.CString(iconName)
+		defer C.free(unsafe.Pointer(cIconName))
+		return wrapStatusIcon(C.copi_status_icon_new_from_icon_name(cIconName))
+	}
+
+	cID := C.CString(appID)
+	defer C.free(unsafe.Pointer(cID))
 	cIconName := C.CString(iconName)
 	defer C.free(unsafe.Pointer(cIconName))
-	return wrapTrayIcon(C.copi_tray_icon_new_from_icon_name(cIconName))
+	return wrapTrayIcon(C.copi_tray_icon_new_from_icon_name(cID, cIconName))
 }
 
 func newTrayIconFromFile(filename string) (*trayIcon, error) {
-	cFilename := C.CString(filename)
-	defer C.free(unsafe.Pointer(cFilename))
+	if !runningWaylandSession() {
+		cFilename := C.CString(filename)
+		defer C.free(unsafe.Pointer(cFilename))
 
-	var cErr *C.char
-	icon := C.copi_tray_icon_new_from_file(cFilename, &cErr)
-	if icon == nil && cErr != nil {
-		defer C.g_free(C.gpointer(unsafe.Pointer(cErr)))
-		return nil, fmt.Errorf("load tray icon %s: %s", filename, C.GoString(cErr))
+		var cErr *C.char
+		icon := C.copi_status_icon_new_from_file(cFilename, &cErr)
+		if icon == nil && cErr != nil {
+			defer C.g_free(C.gpointer(unsafe.Pointer(cErr)))
+			return nil, fmt.Errorf("load tray icon %s: %s", filename, C.GoString(cErr))
+		}
+		return wrapStatusIcon(icon)
 	}
-	return wrapTrayIcon(icon)
+
+	iconName := strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
+	iconPath := filepath.Dir(filename)
+
+	cID := C.CString(appID)
+	defer C.free(unsafe.Pointer(cID))
+	cIconName := C.CString(iconName)
+	defer C.free(unsafe.Pointer(cIconName))
+	cIconPath := C.CString(iconPath)
+	defer C.free(unsafe.Pointer(cIconPath))
+	return wrapTrayIcon(C.copi_tray_icon_new_with_path(cID, cIconName, cIconPath))
 }
 
-func wrapTrayIcon(native *C.GtkStatusIcon) (*trayIcon, error) {
+func wrapTrayIcon(native *C.AppIndicator) (*trayIcon, error) {
+	if native == nil {
+		return nil, fmt.Errorf("create app indicator")
+	}
+	return &trayIcon{
+		kind:      trayKindIndicator,
+		indicator: native,
+	}, nil
+}
+
+func wrapStatusIcon(native *C.GtkStatusIcon) (*trayIcon, error) {
 	if native == nil {
 		return nil, fmt.Errorf("create GTK status icon")
 	}
 
-	icon := &trayIcon{native: native}
+	icon := &trayIcon{
+		kind:       trayKindStatusIcon,
+		statusIcon: native,
+	}
 	trayIcons.Lock()
 	trayIcons.next++
 	icon.id = trayIcons.next
@@ -138,31 +210,69 @@ func lookupTrayIcon(id uintptr) *trayIcon {
 func (i *trayIcon) SetTitle(title string) {
 	cTitle := C.CString(title)
 	defer C.free(unsafe.Pointer(cTitle))
-	C.copi_tray_icon_set_title(i.native, cTitle)
+	switch i.kind {
+	case trayKindIndicator:
+		C.copi_tray_icon_set_title(i.indicator, cTitle)
+	case trayKindStatusIcon:
+		C.copi_status_icon_set_title(i.statusIcon, cTitle)
+	}
 }
 
 func (i *trayIcon) SetTooltipText(text string) {
 	cText := C.CString(text)
 	defer C.free(unsafe.Pointer(cText))
-	C.copi_tray_icon_set_tooltip_text(i.native, cText)
+	switch i.kind {
+	case trayKindIndicator:
+		C.copi_tray_icon_set_title(i.indicator, cText)
+	case trayKindStatusIcon:
+		C.copi_status_icon_set_tooltip_text(i.statusIcon, cText)
+	}
 }
 
 func (i *trayIcon) SetVisible(visible bool) {
-	C.copi_tray_icon_set_visible(i.native, gbool(visible))
+	switch i.kind {
+	case trayKindIndicator:
+		C.copi_tray_icon_set_visible(i.indicator, gbool(visible))
+	case trayKindStatusIcon:
+		C.copi_status_icon_set_visible(i.statusIcon, gbool(visible))
+	}
 }
 
 func (i *trayIcon) IsEmbedded() bool {
-	return C.copi_tray_icon_is_embedded(i.native) != 0
+	switch i.kind {
+	case trayKindIndicator:
+		return true
+	case trayKindStatusIcon:
+		return C.copi_status_icon_is_embedded(i.statusIcon) != 0
+	default:
+		return false
+	}
+}
+
+func (i *trayIcon) SetMenu(menu *gtk.Menu) {
+	if i.kind == trayKindIndicator {
+		C.copi_tray_icon_set_menu(i.indicator, C.uintptr_t(menu.Native()))
+	}
 }
 
 func (i *trayIcon) ConnectActivate(fn func()) {
 	i.onActivate = fn
-	C.copi_tray_icon_connect_activate(i.native, C.uintptr_t(i.id))
+	if i.kind == trayKindStatusIcon {
+		C.copi_status_icon_connect_activate(i.statusIcon, C.uintptr_t(i.id))
+	}
 }
 
 func (i *trayIcon) ConnectPopupMenu(fn func(button uint, activateTime uint32)) {
 	i.onPopupMenu = fn
-	C.copi_tray_icon_connect_popup_menu(i.native, C.uintptr_t(i.id))
+	if i.kind == trayKindStatusIcon {
+		C.copi_status_icon_connect_popup_menu(i.statusIcon, C.uintptr_t(i.id))
+	}
+}
+
+func (i *trayIcon) PopupMenu(menu *gtk.Menu, button uint, activateTime uint32) {
+	if i.kind == trayKindStatusIcon {
+		C.copi_status_icon_popup_at_icon(i.statusIcon, (*C.GtkMenu)(unsafe.Pointer(menu.Native())), C.guint(button), C.guint32(activateTime))
+	}
 }
 
 func gbool(v bool) C.gboolean {

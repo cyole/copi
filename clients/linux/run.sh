@@ -14,10 +14,11 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   exit 1
 fi
 
-if ! pkg-config --exists gtk+-3.0; then
-  echo "Missing GTK 3 development files." >&2
-  echo "Ubuntu/Debian: sudo apt install libgtk-3-dev pkg-config" >&2
-  echo "Fedora: sudo dnf install gtk3-devel pkgconf-pkg-config" >&2
+if ! pkg-config --exists gtk+-3.0 ayatana-appindicator3-0.1; then
+  echo "Missing GTK 3 or Ayatana AppIndicator development files." >&2
+  echo "Ubuntu/Debian: sudo apt install libgtk-3-dev libayatana-appindicator3-dev pkg-config" >&2
+  echo "Fedora: sudo dnf install gtk3-devel libayatana-appindicator-gtk3-devel pkgconf-pkg-config" >&2
+  echo "Arch: sudo pacman -S gtk3 libayatana-appindicator pkgconf" >&2
   exit 1
 fi
 

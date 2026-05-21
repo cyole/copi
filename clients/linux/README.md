@@ -7,16 +7,22 @@ This is the first Linux native shell for Copi. It is a Go GTK tray app that laun
 Ubuntu/Debian:
 
 ```bash
-sudo apt install libgtk-3-dev pkg-config
+sudo apt install libgtk-3-dev libayatana-appindicator3-dev pkg-config
 ```
 
 Fedora:
 
 ```bash
-sudo dnf install gtk3-devel pkgconf-pkg-config
+sudo dnf install gtk3-devel libayatana-appindicator-gtk3-devel pkgconf-pkg-config
 ```
 
-The source build uses `gotk3`, so GTK 3 development files are required at build time. Runtime packages need `libgtk-3-0` or the distribution equivalent.
+Arch:
+
+```bash
+sudo pacman -S gtk3 libayatana-appindicator pkgconf
+```
+
+The source build uses `gotk3` plus Ayatana AppIndicator. GTK 3 and AppIndicator development files are required at build time. Runtime packages need `libgtk-3-0`, `libayatana-appindicator3-1`, or the distribution equivalents.
 
 ## Run From Source
 
