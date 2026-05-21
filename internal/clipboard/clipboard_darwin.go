@@ -3,20 +3,21 @@
 package clipboard
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 )
 
 func (System) ReadText() (string, error) {
-	out, err := exec.Command("pbpaste").Output()
+	out, err := utf8DarwinCommand("pbpaste", "-Prefer", "txt").Output()
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimRight(string(out), "\x00"), nil
+	return strings.TrimRight(validUTF8String(out), "\x00"), nil
 }
 
 func (System) WriteText(text string) error {
-	cmd := exec.Command("pbcopy")
+	cmd := utf8DarwinCommand("pbcopy")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -34,4 +35,14 @@ func (System) WriteText(text string) error {
 		return err
 	}
 	return cmd.Wait()
+}
+
+func utf8DarwinCommand(name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	cmd.Env = withEnvOverrides(os.Environ(), map[string]string{
+		"LANG":     "en_US.UTF-8",
+		"LC_ALL":   "en_US.UTF-8",
+		"LC_CTYPE": "UTF-8",
+	})
+	return cmd
 }

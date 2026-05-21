@@ -9,23 +9,34 @@ import (
 	"strings"
 )
 
-type linuxBackend struct {
-	readArgs  []string
-	writeArgs []string
-}
+const utf8TextMIME = "text/plain;charset=utf-8"
 
-var linuxBackends = []linuxBackend{
-	{readArgs: []string{"wl-paste", "--no-newline"}, writeArgs: []string{"wl-copy"}},
-	{readArgs: []string{"xclip", "-selection", "clipboard", "-out"}, writeArgs: []string{"xclip", "-selection", "clipboard"}},
-	{readArgs: []string{"xsel", "--clipboard", "--output"}, writeArgs: []string{"xsel", "--clipboard", "--input"}},
-}
+var (
+	waylandReadCommands = [][]string{
+		{"wl-paste", "--no-newline", "--type", utf8TextMIME},
+		{"wl-paste", "--no-newline", "--type", "text/plain"},
+		{"wl-paste", "--no-newline"},
+	}
+	waylandWriteCommands = [][]string{
+		{"wl-copy", "--type", utf8TextMIME},
+	}
+	x11ReadCommands = [][]string{
+		{"xclip", "-selection", "clipboard", "-target", "UTF8_STRING", "-out"},
+		{"xclip", "-selection", "clipboard", "-out"},
+		{"xsel", "--clipboard", "--output"},
+	}
+	x11WriteCommands = [][]string{
+		{"xclip", "-selection", "clipboard", "-target", "UTF8_STRING"},
+		{"xsel", "--clipboard", "--input"},
+	}
+)
 
 func (System) ReadText() (string, error) {
 	var errs []error
-	for _, backend := range preferredLinuxBackends() {
-		out, err := exec.Command(backend.readArgs[0], backend.readArgs[1:]...).Output()
+	for _, args := range preferredLinuxReadCommands() {
+		out, err := utf8LinuxCommand(args).Output()
 		if err == nil {
-			return string(out), nil
+			return validUTF8String(out), nil
 		}
 		errs = append(errs, err)
 	}
@@ -34,8 +45,8 @@ func (System) ReadText() (string, error) {
 
 func (System) WriteText(text string) error {
 	var errs []error
-	for _, backend := range preferredLinuxBackends() {
-		cmd := exec.Command(backend.writeArgs[0], backend.writeArgs[1:]...)
+	for _, args := range preferredLinuxWriteCommands() {
+		cmd := utf8LinuxCommand(args)
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
 			errs = append(errs, err)
@@ -65,9 +76,32 @@ func (System) WriteText(text string) error {
 	return errors.Join(errs...)
 }
 
-func preferredLinuxBackends() []linuxBackend {
+func preferredLinuxReadCommands() [][]string {
 	if strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != "" {
-		return linuxBackends
+		return appendCommandLists(waylandReadCommands, x11ReadCommands)
 	}
-	return []linuxBackend{linuxBackends[1], linuxBackends[2], linuxBackends[0]}
+	return appendCommandLists(x11ReadCommands, waylandReadCommands)
+}
+
+func preferredLinuxWriteCommands() [][]string {
+	if strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != "" {
+		return appendCommandLists(waylandWriteCommands, x11WriteCommands)
+	}
+	return appendCommandLists(x11WriteCommands, waylandWriteCommands)
+}
+
+func appendCommandLists(first, second [][]string) [][]string {
+	commands := make([][]string, 0, len(first)+len(second))
+	commands = append(commands, first...)
+	commands = append(commands, second...)
+	return commands
+}
+
+func utf8LinuxCommand(args []string) *exec.Cmd {
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Env = withEnvOverrides(os.Environ(), map[string]string{
+		"LANG":     "C.UTF-8",
+		"LC_CTYPE": "C.UTF-8",
+	})
+	return cmd
 }
