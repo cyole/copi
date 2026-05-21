@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LINUX_DIR="$ROOT_DIR/clients/linux"
 DIST_DIR="$LINUX_DIR/dist"
 BUILD_DIR="$LINUX_DIR/build/package"
+# gotk3 v0.6.4's GTK 3.22 GDK binding does not compile with current Go/cgo.
+GUI_TAGS="${GUI_TAGS:-gtk_3_20}"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "clients/linux/package.sh must be run on Linux." >&2
@@ -37,7 +39,7 @@ mkdir -p \
 
 cd "$ROOT_DIR"
 go build -trimpath -ldflags="-s -w" -o "$STAGE/usr/bin/copi" ./cmd/copi
-go build -trimpath -ldflags="-s -w" -o "$STAGE/usr/bin/copi-linux-gui" ./clients/linux/cmd/copi-linux-gui
+go build -tags "$GUI_TAGS" -trimpath -ldflags="-s -w" -o "$STAGE/usr/bin/copi-linux-gui" ./clients/linux/cmd/copi-linux-gui
 
 install -m 0644 "$LINUX_DIR/share/applications/com.cyole.copi.desktop" "$STAGE/usr/share/applications/com.cyole.copi.desktop"
 install -m 0644 "$LINUX_DIR/share/icons/hicolor/scalable/apps/com.cyole.copi.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/com.cyole.copi.svg"

@@ -30,10 +30,11 @@ The script builds:
 
 ```bash
 go build -o clients/linux/build/copi ./cmd/copi
-go build -o clients/linux/build/copi-linux-gui ./clients/linux/cmd/copi-linux-gui
+go build -tags gtk_3_20 -o clients/linux/build/copi-linux-gui ./clients/linux/cmd/copi-linux-gui
 ```
 
 Then it starts the GTK shell with `COPI_CLI` pointing at that CLI binary.
+The GUI build targets gotk3's GTK 3.20 bindings to avoid a broken GTK 3.22 GDK wrapper in gotk3 v0.6.4.
 
 To use an existing CLI binary:
 

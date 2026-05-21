@@ -5,10 +5,12 @@ package main
 import (
 	"fmt"
 	"html"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/gotk3/gotk3/gdk"
+	"github.com/gotk3/gotk3/glib"
 	"github.com/gotk3/gotk3/gtk"
 )
 
@@ -20,11 +22,15 @@ type linuxApp struct {
 	logs     []logEvent
 	iconPath string
 
-	statusIcon *gtk.StatusIcon
+	statusIcon *trayIcon
 	menu       *gtk.Menu
 	statusItem *gtk.MenuItem
 	modeItem   *gtk.MenuItem
 	toggleItem *gtk.MenuItem
+
+	windowStatusItem *gtk.MenuItem
+	windowModeItem   *gtk.MenuItem
+	windowToggleItem *gtk.MenuItem
 
 	settingsWindow *gtk.Window
 	logsWindow     *gtk.Window
@@ -78,9 +84,21 @@ func newLinuxApp() (*linuxApp, error) {
 }
 
 func (a *linuxApp) run() {
-	if a.statusIcon == nil {
+	if a.statusIcon == nil || runningWaylandSession() {
 		a.showSettings()
+		return
 	}
+
+	glib.TimeoutAdd(1000, func() bool {
+		if a.statusIcon != nil && !a.statusIcon.IsEmbedded() {
+			a.showSettings()
+		}
+		return false
+	})
+}
+
+func runningWaylandSession() bool {
+	return strings.EqualFold(os.Getenv("XDG_SESSION_TYPE"), "wayland") || os.Getenv("WAYLAND_DISPLAY") != ""
 }
 
 func (a *linuxApp) installCSS() {
@@ -143,18 +161,22 @@ func (a *linuxApp) buildTray() error {
 	menu.Append(quitItem)
 	menu.ShowAll()
 
+	if runningWaylandSession() {
+		return nil
+	}
+
 	if a.iconPath == "" {
-		a.statusIcon = must(gtk.StatusIconNewFromIconName("network-server-symbolic"))
+		a.statusIcon = must(newTrayIconFromIconName("network-server-symbolic"))
 	} else {
-		a.statusIcon = must(gtk.StatusIconNewFromFile(a.iconPath))
+		a.statusIcon = must(newTrayIconFromFile(a.iconPath))
 	}
 	a.statusIcon.SetTitle(appName)
 	a.statusIcon.SetVisible(true)
-	a.statusIcon.Connect("activate", func() {
+	a.statusIcon.ConnectActivate(func() {
 		a.showSettings()
 	})
-	a.statusIcon.Connect("popup-menu", func(icon *gtk.StatusIcon, button uint, activateTime uint32) {
-		a.menu.PopupAtStatusIcon(icon, gdk.Button(button), activateTime)
+	a.statusIcon.ConnectPopupMenu(func(button uint, activateTime uint32) {
+		a.menu.PopupAtPointer(nil)
 	})
 	return nil
 }
@@ -170,6 +192,10 @@ func (a *linuxApp) showSettings() {
 	window.SetDefaultSize(760, 560)
 	window.SetPosition(gtk.WIN_POS_CENTER)
 	window.Connect("delete-event", func() bool {
+		if a.statusIcon == nil {
+			a.quit()
+			return true
+		}
 		window.Hide()
 		return true
 	})
@@ -178,6 +204,8 @@ func (a *linuxApp) showSettings() {
 	root := must(gtk.BoxNew(gtk.ORIENTATION_VERTICAL, 0))
 	window.Add(root)
 
+	root.PackStart(a.buildSettingsMenuBar(), false, false, 0)
+	root.PackStart(must(gtk.SeparatorNew(gtk.ORIENTATION_HORIZONTAL)), false, false, 0)
 	root.PackStart(a.buildSettingsHeader(), false, false, 0)
 	root.PackStart(must(gtk.SeparatorNew(gtk.ORIENTATION_HORIZONTAL)), false, false, 0)
 
@@ -205,6 +233,45 @@ func (a *linuxApp) showSettings() {
 	window.Present()
 }
 
+func (a *linuxApp) buildSettingsMenuBar() *gtk.MenuBar {
+	menuBar := must(gtk.MenuBarNew())
+
+	appItem := must(gtk.MenuItemNewWithLabel("Copi"))
+	appMenu := must(gtk.MenuNew())
+
+	a.windowStatusItem = must(gtk.MenuItemNewWithLabel(a.process.statusTitle()))
+	a.windowStatusItem.SetSensitive(false)
+	appMenu.Append(a.windowStatusItem)
+
+	a.windowModeItem = must(gtk.MenuItemNewWithLabel(a.settings.modeTitle()))
+	a.windowModeItem.SetSensitive(false)
+	appMenu.Append(a.windowModeItem)
+	appMenu.Append(must(gtk.SeparatorMenuItemNew()))
+
+	a.windowToggleItem = must(gtk.MenuItemNewWithLabel("启动同步"))
+	a.windowToggleItem.Connect("activate", func() {
+		a.toggleSync()
+	})
+	appMenu.Append(a.windowToggleItem)
+
+	logsItem := must(gtk.MenuItemNewWithLabel("日志..."))
+	logsItem.Connect("activate", func() {
+		a.showLogs()
+	})
+	appMenu.Append(logsItem)
+	appMenu.Append(must(gtk.SeparatorMenuItemNew()))
+
+	quitItem := must(gtk.MenuItemNewWithLabel("退出 Copi"))
+	quitItem.Connect("activate", func() {
+		a.quit()
+	})
+	appMenu.Append(quitItem)
+
+	appItem.SetSubmenu(appMenu)
+	menuBar.Append(appItem)
+	return menuBar
+}
+
 func (a *linuxApp) buildSettingsHeader() *gtk.Box {
 	header := must(gtk.BoxNew(gtk.ORIENTATION_HORIZONTAL, 14))
 	header.SetMarginTop(18)
@@ -212,11 +279,13 @@ func (a *linuxApp) buildSettingsHeader() *gtk.Box {
 	header.SetMarginStart(22)
 	header.SetMarginEnd(22)
 
-	var image *gtk.Image
+	image := must(gtk.ImageNewFromIconName("network-server-symbolic", gtk.ICON_SIZE_DIALOG))
 	if a.iconPath != "" {
-		image = must(gtk.ImageNewFromFile(a.iconPath))
-	} else {
-		image = must(gtk.ImageNewFromIconName("network-server-symbolic", gtk.ICON_SIZE_DIALOG))
+		if pixbuf, err := gdk.PixbufNewFromFileAtScale(a.iconPath, 40, 40, true); err == nil {
+			if fileImage, err := gtk.ImageNewFromPixbuf(pixbuf); err == nil {
+				image = fileImage
+			}
+		}
 	}
 	image.SetPixelSize(40)
 	header.PackStart(image, false, false, 0)
@@ -231,6 +300,12 @@ func (a *linuxApp) buildSettingsHeader() *gtk.Box {
 	a.settingsStatus.SetXAlign(0)
 	titleBox.PackStart(a.settingsStatus, false, false, 0)
 	header.PackStart(titleBox, true, true, 0)
+
+	logsButton := must(gtk.ButtonNewWithLabel("日志"))
+	logsButton.Connect("clicked", func() {
+		a.showLogs()
+	})
+	header.PackStart(logsButton, false, false, 0)
 
 	a.headerToggle = must(gtk.ButtonNewWithLabel("启动"))
 	a.headerToggle.Connect("clicked", func() {
@@ -463,10 +538,22 @@ func (a *linuxApp) refreshStatus() {
 	status := a.process.statusTitle()
 	a.statusItem.SetLabel(status)
 	a.modeItem.SetLabel(a.settings.modeTitle())
+	if a.windowStatusItem != nil {
+		a.windowStatusItem.SetLabel(status)
+	}
+	if a.windowModeItem != nil {
+		a.windowModeItem.SetLabel(a.settings.modeTitle())
+	}
 	if a.process.isRunning() {
 		a.toggleItem.SetLabel("停止同步")
+		if a.windowToggleItem != nil {
+			a.windowToggleItem.SetLabel("停止同步")
+		}
 	} else {
 		a.toggleItem.SetLabel("启动同步")
+		if a.windowToggleItem != nil {
+			a.windowToggleItem.SetLabel("启动同步")
+		}
 	}
 
 	tooltip := fmt.Sprintf("%s · %s · %s", appName, status, a.settings.modeTitle())
@@ -487,6 +574,15 @@ func (a *linuxApp) updateSettingsState() {
 		} else {
 			a.headerToggle.SetLabel("启动")
 			a.headerToggle.SetSensitive(a.process.canStart() && a.settings.runnable())
+		}
+	}
+	if a.windowToggleItem != nil {
+		if a.process.isRunning() {
+			a.windowToggleItem.SetLabel("停止同步")
+			a.windowToggleItem.SetSensitive(true)
+		} else {
+			a.windowToggleItem.SetLabel("启动同步")
+			a.windowToggleItem.SetSensitive(a.process.canStart() && a.settings.runnable())
 		}
 	}
 	if a.syncSection != nil {

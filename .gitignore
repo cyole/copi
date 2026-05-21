@@ -9,6 +9,9 @@ coverage.txt
 # Legacy local build artifacts
 /target
 
+# Linux client local build artifacts
+/clients/linux/build/
+
 # Release artifacts
 *.tar.gz
 *.zip

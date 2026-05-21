@@ -103,7 +103,10 @@ func (p *processController) start(settings appSettings) {
 	)
 
 	cmd := exec.Command(cliPath, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid:   true,
+		Pdeathsig: syscall.SIGTERM,
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
