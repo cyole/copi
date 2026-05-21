@@ -1,22 +1,22 @@
 # Copi Linux Client
 
-This is the first Linux native shell for Copi. It is a GTK tray app that launches the Go CLI core as a child process.
+This is the first Linux native shell for Copi. It is a Go GTK tray app that launches the Go CLI core as a child process.
 
 ## Dependencies
 
 Ubuntu/Debian:
 
 ```bash
-sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1
+sudo apt install libgtk-3-dev pkg-config
 ```
 
 Fedora:
 
 ```bash
-sudo dnf install python3-gobject gtk3 libayatana-appindicator-gtk3
+sudo dnf install gtk3-devel pkgconf-pkg-config
 ```
 
-If AppIndicator is not available, the app falls back to `Gtk.StatusIcon`. On modern GNOME, AppIndicator support may require the distribution's tray indicator extension.
+The source build uses `gotk3`, so GTK 3 development files are required at build time. Runtime packages need `libgtk-3-0` or the distribution equivalent.
 
 ## Run From Source
 
@@ -30,15 +30,33 @@ The script builds:
 
 ```bash
 go build -o clients/linux/build/copi ./cmd/copi
+go build -o clients/linux/build/copi-linux-gui ./clients/linux/cmd/copi-linux-gui
 ```
 
-Then it starts the GTK shell with `COPI_CLI` pointing at that binary.
+Then it starts the GTK shell with `COPI_CLI` pointing at that CLI binary.
 
 To use an existing CLI binary:
 
 ```bash
-COPI_CLI=/path/to/copi ./clients/linux/run.sh --no-build
+COPI_CLI=/path/to/copi ./clients/linux/run.sh
 ```
+
+## Build Packages
+
+Run this on a Linux machine:
+
+```bash
+./clients/linux/package.sh
+```
+
+It writes:
+
+```text
+clients/linux/dist/copi-linux-<version>-<arch>.tar.gz
+clients/linux/dist/copi-linux-<version>-<arch>.deb
+```
+
+The `.deb` is created when `dpkg-deb` is available.
 
 ## Current MVP
 
@@ -57,4 +75,4 @@ Settings are stored at:
 ~/.config/copi/linux-gui.json
 ```
 
-The CLI path is intentionally not shown in the user interface. The app resolves it internally from `COPI_CLI`, `clients/linux/build/copi`, a sibling `copi`, or `PATH`.
+The CLI path is intentionally not shown in the user interface. The app resolves it internally from `COPI_CLI`, a sibling `copi`, `/usr/bin/copi`, or `PATH`.
