@@ -29,9 +29,7 @@ The current shell contract is documented in [../docs/CLI_CONTRACT.md](../docs/CL
 
 ## Windows Choice
 
-For Windows, start with WinUI 3 + C#/.NET. It is the most natural fit for a modern native Windows app with settings pages, notifications, tray/background behavior, startup tasks, and access to Windows platform APIs.
-
-WPF + .NET is still a good fallback if the first Windows client should be tray-first and very small. Avoid web-wrapped UI for the first native Windows app unless the product direction changes.
+For Windows, use WinUI 3 + C#/.NET. It is the product direction for the native Windows shell: settings pages, notifications, tray/background behavior, startup integration, and access to Windows platform APIs.
 
 ## First Native Client Milestone
 
@@ -57,6 +55,18 @@ open clients/macos/Copi.xcodeproj
 ```
 
 The target is named `Copi` and bundles the Go CLI during the Xcode build.
+
+## Current Windows Client
+
+The first Windows shell lives at [windows](windows). It is a WinUI 3 tray app with a cloud tray icon and settings/logs windows.
+
+Run it on Windows with:
+
+```powershell
+.\clients\windows\run.ps1
+```
+
+The script builds `clients\windows\build\copi.exe`, then launches the WinUI shell with that sync core.
 
 ## Current Linux Client
 

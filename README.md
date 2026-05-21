@@ -38,8 +38,8 @@ If auto-detected addressing is wrong:
 
 ```bash
 copi client --lan \
-  --listen 0.0.0.0:9528 \
-  --advertise http://192.168.1.20:9528 \
+  --listen 0.0.0.0:49152 \
+  --advertise http://192.168.1.20:49152 \
   --token your-secret
 ```
 
@@ -82,7 +82,7 @@ go test ./...
 ```text
 copi relay [--addr 0.0.0.0:9527] [--token secret] [--log-format text|json]
 copi client --relay http://host:9527 [--token secret] [--log-format text|json]
-copi client --lan [--listen 0.0.0.0:9528] [--token secret] [--log-format text|json]
+copi client --lan [--listen 0.0.0.0:0] [--token secret] [--log-format text|json]
 copi doctor [--json] [--mode all|relay|client|lan]
 copi version [--json]
 ```

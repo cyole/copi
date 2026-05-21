@@ -12,6 +12,12 @@ coverage.txt
 # Linux client local build artifacts
 /clients/linux/build/
 
+# Windows client local build artifacts
+/clients/windows/build/
+/clients/windows/dist/
+/clients/windows/Copi.Windows/bin/
+/clients/windows/Copi.Windows/obj/
+
 # Release artifacts
 *.tar.gz
 *.zip
