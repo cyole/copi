@@ -31,6 +31,8 @@ copi client --config ./copi.json --relay http://127.0.0.1:9527
 
 LAN pairing is a native-app workflow, not a separate user-facing CLI command. For the MVP, native shells may store a generated sync key and pass it to `copi client --lan --token <sync-key>`. The user-facing pairing-code direction is documented in [LAN_PAIRING.md](LAN_PAIRING.md).
 
+LAN clients default to a random available peer HTTP port (`0.0.0.0:0`). Native shells should not display or require this port; peers learn the actual port through LAN discovery.
+
 ## Doctor
 
 ```bash
@@ -72,6 +74,8 @@ Important event types:
 - `client_starting`
 - `lan_starting`
 - `lan_peer_listening`
+- `lan_announce_failed`
+- `lan_announce_interface_failed`
 - `peer_discovered`
 - `clipboard_published`
 - `clipboard_applied`

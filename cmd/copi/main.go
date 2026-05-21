@@ -373,7 +373,7 @@ func usage() {
 Usage:
   copi relay [--addr 0.0.0.0:9527] [--token secret] [--log-format text|json]
   copi client --relay http://host:9527 [--token secret] [--log-format text|json]
-  copi client --lan [--listen 0.0.0.0:9528] [--token secret] [--log-format text|json]
+  copi client --lan [--listen 0.0.0.0:0] [--token secret] [--log-format text|json]
   copi doctor [--json] [--mode all|relay|client|lan]
   copi version [--json]
 

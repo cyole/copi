@@ -20,7 +20,10 @@ import (
 	"github.com/cyole/copi/internal/server"
 )
 
-const DefaultMulticastAddress = "239.255.27.42:9529"
+const (
+	DefaultListenAddress    = "0.0.0.0:0"
+	DefaultMulticastAddress = "239.255.27.42:9529"
+)
 
 type Options struct {
 	ListenAddr    string
@@ -48,6 +51,11 @@ type peer struct {
 	LastSeen   time.Time
 }
 
+type multicastInterface struct {
+	Name string
+	IP   net.IP
+}
+
 type peerStore struct {
 	mu    sync.Mutex
 	peers map[string]peer
@@ -72,27 +80,48 @@ func Run(ctx context.Context, opts Options) error {
 		opts.MulticastAddr = DefaultMulticastAddress
 	}
 
+	requestedListenAddr := opts.ListenAddr
+	listener, actualListenAddr, err := listenPeerHTTP(opts.ListenAddr)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	if requestedListenAddr == "" {
+		requestedListenAddr = DefaultListenAddress
+	}
+	opts.ListenAddr = actualListenAddr
+
 	advertiseURL := strings.TrimRight(opts.AdvertiseURL, "/")
 	if advertiseURL == "" {
-		var err error
-		advertiseURL, err = inferAdvertiseURL(opts.ListenAddr)
-		if err != nil {
-			return err
+		host, _, splitErr := splitListenAddr(opts.ListenAddr)
+		if splitErr != nil {
+			return splitErr
+		}
+		if !isWildcardHost(host) {
+			advertiseURL, err = inferAdvertiseURL(opts.ListenAddr)
+			if err != nil {
+				return err
+			}
 		}
 	}
+	logAdvertiseURL := advertiseURL
+	if logAdvertiseURL == "" {
+		logAdvertiseURL = "auto"
+	}
 	opts.Logger.Info("started", "LAN sync started", eventlog.Fields{
-		"mode":           "lan",
-		"listen":         opts.ListenAddr,
-		"advertise_url":  advertiseURL,
-		"multicast_addr": opts.MulticastAddr,
-		"device_id":      opts.DeviceID,
-		"device_name":    opts.DeviceName,
+		"mode":             "lan",
+		"listen":           opts.ListenAddr,
+		"listen_requested": requestedListenAddr,
+		"advertise_url":    logAdvertiseURL,
+		"multicast_addr":   opts.MulticastAddr,
+		"device_id":        opts.DeviceID,
+		"device_name":      opts.DeviceName,
 	})
 
 	store := &peerStore{peers: make(map[string]peer)}
 	state := &syncState{}
 	httpClient := &http.Client{Timeout: 5 * time.Second}
-	errCh := make(chan error, 5)
+	errCh := make(chan error, 6)
 
 	srv := &http.Server{
 		Addr:    opts.ListenAddr,
@@ -101,10 +130,11 @@ func Run(ctx context.Context, opts Options) error {
 
 	go func() {
 		opts.Logger.Info("lan_peer_listening", "LAN peer HTTP listening", eventlog.Fields{
-			"listen":        opts.ListenAddr,
-			"advertise_url": advertiseURL,
+			"listen":           opts.ListenAddr,
+			"listen_requested": requestedListenAddr,
+			"advertise_url":    logAdvertiseURL,
 		})
-		err := srv.ListenAndServe()
+		err := srv.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
@@ -139,6 +169,17 @@ func Run(ctx context.Context, opts Options) error {
 		}
 		return err
 	}
+}
+
+func listenPeerHTTP(addr string) (net.Listener, string, error) {
+	if strings.TrimSpace(addr) == "" {
+		addr = DefaultListenAddress
+	}
+	listener, err := net.Listen("tcp4", addr)
+	if err != nil {
+		return nil, "", err
+	}
+	return listener, listener.Addr().String(), nil
 }
 
 func lanHandler(opts Options, state *syncState) http.Handler {
@@ -246,23 +287,17 @@ func announceLoop(ctx context.Context, opts Options, advertiseURL string) error 
 	if err != nil {
 		return err
 	}
-	conn, err := net.DialUDP("udp4", nil, addr)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
 
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
 	send := func() {
-		payload, _ := json.Marshal(announcement{
-			DeviceID:   opts.DeviceID,
-			DeviceName: opts.DeviceName,
-			URL:        advertiseURL,
-			Time:       time.Now().UTC(),
-		})
-		_, _ = conn.Write(payload)
+		if err := sendAnnouncements(opts, addr, advertiseURL); err != nil {
+			opts.Logger.Warn("lan_announce_failed", "LAN peer announce failed", eventlog.Fields{
+				"error":          err.Error(),
+				"multicast_addr": opts.MulticastAddr,
+			})
+		}
 	}
 
 	send()
@@ -273,6 +308,145 @@ func announceLoop(ctx context.Context, opts Options, advertiseURL string) error 
 		case <-ticker.C:
 			send()
 		}
+	}
+}
+
+func sendAnnouncements(opts Options, multicastAddr *net.UDPAddr, fallbackURL string) error {
+	explicitURL := strings.TrimRight(opts.AdvertiseURL, "/")
+	host, port, err := splitListenAddr(opts.ListenAddr)
+	if err != nil {
+		return err
+	}
+
+	if explicitURL != "" || !isWildcardHost(host) {
+		url := explicitURL
+		if url == "" {
+			url = "http://" + net.JoinHostPort(host, port)
+		}
+		return sendAnnouncementToAllInterfaces(multicastAddr, announcementPayload(opts, url))
+	}
+
+	var firstErr error
+	sent := 0
+	for _, iface := range multicastInterfaces() {
+		url := "http://" + net.JoinHostPort(iface.IP.String(), port)
+		if err := sendMulticast(multicastAddr, iface.IP, announcementPayload(opts, url)); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", iface.Name, err)
+			}
+			opts.Logger.Warn("lan_announce_interface_failed", "LAN peer announce failed on interface", eventlog.Fields{
+				"error":          err.Error(),
+				"interface":      iface.Name,
+				"interface_ip":   iface.IP.String(),
+				"multicast_addr": multicastAddr.String(),
+			})
+			continue
+		}
+		sent++
+	}
+	if sent > 0 {
+		return nil
+	}
+	if fallbackURL == "" {
+		var err error
+		fallbackURL, err = inferAdvertiseURL(opts.ListenAddr)
+		if err != nil {
+			return err
+		}
+	}
+	if err := sendMulticast(multicastAddr, nil, announcementPayload(opts, fallbackURL)); err != nil {
+		if firstErr != nil {
+			return firstErr
+		}
+		return err
+	}
+	return nil
+}
+
+func sendAnnouncementToAllInterfaces(multicastAddr *net.UDPAddr, payload []byte) error {
+	var firstErr error
+	sent := 0
+	for _, iface := range multicastInterfaces() {
+		if err := sendMulticast(multicastAddr, iface.IP, payload); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", iface.Name, err)
+			}
+			continue
+		}
+		sent++
+	}
+	if sent > 0 {
+		return nil
+	}
+	if err := sendMulticast(multicastAddr, nil, payload); err != nil {
+		if firstErr != nil {
+			return firstErr
+		}
+		return err
+	}
+	return nil
+}
+
+func sendMulticast(multicastAddr *net.UDPAddr, localIP net.IP, payload []byte) error {
+	var localAddr *net.UDPAddr
+	if localIP != nil {
+		localAddr = &net.UDPAddr{IP: localIP}
+	}
+	conn, err := net.DialUDP("udp4", localAddr, multicastAddr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_, err = conn.Write(payload)
+	return err
+}
+
+func announcementPayload(opts Options, url string) []byte {
+	payload, _ := json.Marshal(announcement{
+		DeviceID:   opts.DeviceID,
+		DeviceName: opts.DeviceName,
+		URL:        strings.TrimRight(url, "/"),
+		Time:       time.Now().UTC(),
+	})
+	return payload
+}
+
+func multicastInterfaces() []multicastInterface {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	out := make([]multicastInterface, 0, len(ifaces))
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagMulticast == 0 || iface.Flags&net.FlagPointToPoint != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ip := ipv4FromAddr(addr)
+			if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+				continue
+			}
+			out = append(out, multicastInterface{
+				Name: iface.Name,
+				IP:   ip,
+			})
+		}
+	}
+	return out
+}
+
+func ipv4FromAddr(addr net.Addr) net.IP {
+	switch v := addr.(type) {
+	case *net.IPNet:
+		return v.IP.To4()
+	case *net.IPAddr:
+		return v.IP.To4()
+	default:
+		return nil
 	}
 }
 
@@ -376,10 +550,19 @@ func inferAdvertiseURL(listenAddr string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+	if isWildcardHost(host) {
 		host = outboundIP()
 	}
 	return "http://" + net.JoinHostPort(host, port), nil
+}
+
+func isWildcardHost(host string) bool {
+	switch strings.Trim(host, "[]") {
+	case "", "0.0.0.0", "::":
+		return true
+	default:
+		return false
+	}
 }
 
 func splitListenAddr(addr string) (string, string, error) {

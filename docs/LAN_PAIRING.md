@@ -90,6 +90,30 @@ For the first native-client MVP, the native shell can:
 
 This keeps the Go core simple while giving the product the right shape.
 
+## Discovery Notes
+
+LAN mode uses IPv4 UDP multicast for automatic peer discovery. Wired and Wi-Fi
+devices can discover each other when they are on the same bridged LAN and the
+router or access point forwards multicast between Ethernet and Wi-Fi.
+
+Discovery can fail when:
+
+- the Wi-Fi network is a guest network
+- AP/client isolation is enabled
+- wired and wireless clients are on different VLANs or subnets
+- local firewalls block UDP multicast or the peer HTTP port
+- the router drops multicast between Ethernet and Wi-Fi
+
+The peer HTTP transport port is not fixed by default. The current core listens
+on `0.0.0.0:0`, lets the operating system choose a random available high port,
+then announces the actual port to peers. Discovery still uses the shared
+multicast address `239.255.27.42:9529` so devices know where to find each other.
+
+The current core announces on every active non-loopback IPv4 multicast-capable
+interface when the listen address is a wildcard such as `0.0.0.0:0`. This makes
+multi-interface machines and mixed wired/Wi-Fi LANs more reliable, but it cannot
+cross networks that intentionally block multicast.
+
 ## Future CLI/Core Work
 
 Later LAN pairing can become first-class in the Go core:

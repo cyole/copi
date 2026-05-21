@@ -10,7 +10,7 @@ import (
 
 const (
 	DefaultRelayAddr        = "0.0.0.0:9527"
-	DefaultLANListenAddr    = "0.0.0.0:9528"
+	DefaultLANListenAddr    = "0.0.0.0:0"
 	DefaultLANMulticastAddr = "239.255.27.42:9529"
 	DefaultLogFormat        = "text"
 	DefaultClientInterval   = "500ms"
